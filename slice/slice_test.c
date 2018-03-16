@@ -1,6 +1,11 @@
 #include <stdio.h>
 #include "slice.h"
 
+extern inline slice slice_make(size_t, size_t, size_t);
+extern inline slice slice_slice(slice *, size_t, size_t, size_t, bool);
+extern inline void slice_append(slice *, size_t, void *);
+extern inline void slice_remove(slice *, size_t, size_t);
+
 void
 verify_slice(slice s, int *ia) {
     for (unsigned i = 0; i < s.len; i++) {

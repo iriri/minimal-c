@@ -47,7 +47,7 @@ typedef struct slice_hdr {
     slice_append(&(hdr), sizeof(type), &MACRO_CONCAT(_Xtmp, __LINE__))
 #define REMOVE(hdr, type, index) slice_remove(&(hdr), sizeof(type), index)
 
-slice
+inline slice
 slice_make(size_t eltsize, size_t len, size_t cap) {
     base *b = malloc(sizeof(*b));
     b->arr = calloc(cap, eltsize);
@@ -57,7 +57,7 @@ slice_make(size_t eltsize, size_t len, size_t cap) {
     return (slice){b, 0, len};
 }
 
-slice
+inline slice
 slice_slice(slice *hdr, size_t eltsize, size_t head, size_t tail, bool new) {
     assert(tail <= hdr->len);
     if (!new) {
@@ -69,7 +69,7 @@ slice_slice(slice *hdr, size_t eltsize, size_t head, size_t tail, bool new) {
     return s;
 }
 
-void
+inline void
 slice_append(slice *hdr, size_t eltsize, void *elt) {
     if (hdr->len < hdr->base->cap - (hdr->offset / eltsize)) {
         memcpy(ARR(*hdr) + (hdr->len++ * eltsize), elt, eltsize);
@@ -81,7 +81,7 @@ slice_append(slice *hdr, size_t eltsize, void *elt) {
     memcpy(ARR(*hdr) + (hdr->len++ * eltsize), elt, eltsize);
 }
 
-void
+inline void
 slice_remove(slice *hdr, size_t eltsize, size_t index) {
     hdr->len--;
     if (index == hdr->len) {
