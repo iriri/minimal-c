@@ -4,7 +4,10 @@
 void
 verify_slice(slice s, int *ia) {
     for (unsigned i = 0; i < s.len; i++) {
-        assert(INDEX(s, int, i) == ia[i]);
+        if (INDEX(s, int, i) != ia[i]) {
+            printf("%u, %d, %d\n", i, INDEX(s, int, i), ia[i]);
+            assert(false);
+        }
     }
 }
 
@@ -63,9 +66,19 @@ main() {
     int s3ia4[] = {5678};
     verify_slice(s3, s3ia4);
 
+    slice s4 = SLICE(s2, int, 3, 5);
+    int s4ia[] = {7, 8};
+    verify_slice(s4, s4ia);
+    memset(ARR(s4), 0, s4.len * sizeof(int));
+    int s4ia1[] = {0, 0};
+    verify_slice(s4, s4ia1);
+    int s2ia2[] = {4, 5, 6, 0, 0, 9};
+    verify_slice(s2, s2ia2);
+
     DROP(s);
     DROP(s1);
     DROP(s2);
     DROP(s3);
+    DROP(s4);
     printf("All tests passed\n");
 }
