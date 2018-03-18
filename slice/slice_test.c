@@ -1,4 +1,4 @@
-/* Test should be compiled with -fsanitize=address */
+/* test should be compiled with -fsanitize=address */
 #include <stdio.h>
 #include "slice.h"
 
@@ -8,20 +8,21 @@
  * Defining functions this way in a single header library, as opposed to with
  * "static inline", requires this small bit of extra work on the part of the
  * user but avoids code duplication when the header is included in multiple
- * translation units
+ * translation units. This macro also includes definitions for two structs used
+ * by SLIFE_OF
  */
-extern inline slice *slice_make(size_t, size_t, size_t);
-extern inline slice *slice_slice(slice *, size_t, size_t, size_t, size_t);
-extern inline void slice_append(slice *, size_t, void *);
-extern inline void slice_remove(slice *, size_t, size_t);
+SLICE_EXTERN_DECL;
 
 void
 verify_slice(slice *s, int *ia, size_t len) {
-    assert(s->len == len);
+    if (s->len != len) {
+        printf("len mismatch: %lu, %lu\n", s->len, len);
+        assert(0);
+    }
     for (unsigned i = 0; i < s->len; i++) {
         if (INDEX(s, int, i) != ia[i]) {
             printf("%u, %d, %d\n", i, INDEX(s, int, i), ia[i]);
-            assert(false);
+            assert(0);
         }
     }
 }
@@ -57,10 +58,10 @@ main() {
     assert(s2->base->cap == 16);
     int s2ia1[] = {4, 5, 6, 7, 8, 9};
     verify_slice(s2, s2ia1, 6);
-    s = DROP(s); /* should just decrease the ref count of the shared base */
+    DROP(s); /* should just decrease the ref count of the shared base */
     assert(s1->base->refs == 2);
 
-    slice *s3 = SLICE_NEW(s2, int, 1, 4); /* new slice with new base array */
+    slice *s3 = SLICE_FROM(ARR(s2), int, 1, 4); /* slice with new base array */
     assert(s3->base->refs == 1 && s1->base->refs == 2 && s3->base != s1->base);
     assert(s3->base->cap == 6);
     int s3ia[] = {5, 6, 7};
@@ -97,28 +98,53 @@ main() {
     verify_slice(s4, s4ia1, 2);
     int s2ia2[] = {4, 5, 6, 0, 0, 9};
     verify_slice(s2, s2ia2, 6);
+    DROP(s1);
+    DROP(s2);
+    DROP(s3);
+    DROP(s4);
 
-    s1 = DROP(s1);
-    s2 = DROP(s2);
-    s3 = DROP(s3);
-    s4 = DROP(s4);
-
-    /* MAKE returns a pointer now because it's better for composition */
-    slice *s5;
-    APPEND((s5 = MAKE(int, 0, 2)), int, 1);
-    int s5ia[] = {1};
-    verify_slice(s5, s5ia, 1);
-    slice *s6 = MAKE(slice *, 0, 1);
+    /* MAKE returns a pointer because it's better for composition */
+    slice *s5 = MAKE(slice *, 0, 1);
     for (unsigned i = 0; i < 129; i++) {
-        APPEND(s6, slice *, MAKE(int, 0, 2));
+        APPEND(s5, slice *, MAKE(int, 0, 2));
     }
-    assert(s6->base->cap == 256);
-    while (s6->len > 0) {
-        (void)DROP(INDEX(s6, slice *, 0));
-        REMOVE(s6, slice *, 0);
+    assert(s5->base->cap == 256);
+    while (s5->len > 0) {
+        (void)DROP(INDEX(s5, slice *, 0));
+        REMOVE(s5, slice *, 0);
     }
+    DROP(s5);
 
-    s5 = DROP(s5);
-    s6 = DROP(s6);
+    int s6ia[] = {0, 2, 4, 6, 8, 10, 12, 14, 16, 18};
+    slice *s6 = SLICE_FROM(s6ia, int, 0, 10);
+    verify_slice(s6, s6ia, 10);
+    /* SLICE_OF always returns a pointer to the same global array and is
+     * intended to be used when a temporary anonymous slice is wanted */
+    CONCAT(s6, SLICE_OF(ARR(s6), int, 2, 4), int);
+    int s6ia2[] = {0, 2, 4, 6, 8, 10, 12, 14, 16, 18, 4, 6};
+    verify_slice(s6, s6ia2, 12);
+    /* FIND returns -1 if it doesn't find a matching element and REMOVE returns
+     * immediately when passed -1 so the two can be composed safely */
+    int b = 14;
+    int c = 12345;
+    REMOVE(s6, int, FIND(s6, int, b));
+    REMOVE(s6, int, FIND(s6, int, c));
+    int s6ia3[] = {0, 2, 4, 6, 8, 10, 12, 16, 18, 4, 6};
+    verify_slice(s6, s6ia3, 11);
+
+    slice *s7;
+    CONCAT((s7 = MAKE(int, 0, 1)), s6, int); /* contrived, obviously */
+    verify_slice(s7, s6ia3, 11);
+    int ia[] = {1, 3, 5};
+    CONCAT(s7, SLICE_OF(ia, int, 1, 3), int);
+    int s7ia[] = {0, 2, 4, 6, 8, 10, 12, 16, 18, 4, 6, 3, 5};
+    verify_slice(s7, s7ia, 13);
+    slice *s8;
+    CONCAT(s7, (s8 = SLICE(s7, int, 4, 8)), int); /* again, contrived */
+    int s7ia2[] = {0, 2, 4, 6, 8, 10, 12, 16, 18, 4, 6, 3, 5, 8, 10, 12, 16};
+    verify_slice(s7, s7ia2, 17);
+    DROP(s6);
+    DROP(s7);
+    DROP(s8);
     printf("All tests passed\n");
 }
