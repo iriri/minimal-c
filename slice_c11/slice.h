@@ -22,12 +22,12 @@ typedef struct slice_hdr {
 #define SLICE(hdr, type, head, tail) slice_slice(hdr, sizeof(type), head, tail)
 #define SLICE_FROM_N(T, type, head, tail, cap) _Generic((T), \
     slice *: slice_from, \
-    default: _slice_from)((T), sizeof(type), head, tail, cap)
+    default: _slice_from)(T, sizeof(type), head, tail, cap)
 #define SLICE_FROM(arr, type, head, tail) \
     SLICE_FROM_N(arr, type, head, tail, 2 * (tail - head))
 #define SLICE_OF(T, type, head, tail) _Generic((T), \
     slice *: slice_of, \
-    default: slice_of_arr)((T), sizeof(type), head, tail)
+    default: slice_of_arr)(T, sizeof(type), head, tail)
 
 #define ARR(hdr) slice_arr(hdr)
 #define INDEX(hdr, type, index) ((type *)ARR(hdr))[index]
@@ -38,7 +38,7 @@ typedef struct slice_hdr {
 #define APPEND(hdr, type, elt) *(type *)slice_append(hdr, sizeof(type)) = elt
 #define CONCAT(s1, T, type) _Generic((T), \
     slice *: slice_concat, \
-    slice: _slice_concat)(s1, (T), sizeof(type))
+    slice: _slice_concat)(s1, T, sizeof(type))
 #define FIND(hdr, type, elt) slice_find(hdr, sizeof(type), &elt)
 #define REMOVE(hdr, type, index) slice_remove(hdr, sizeof(type), index)
 
@@ -65,11 +65,10 @@ extern slice_base _slice_tmp_base;
 
 inline slice *
 slice_make(size_t eltsize, size_t len, size_t cap) {
-    slice_base *b = malloc(sizeof(*b));
-    *b = (slice_base){malloc(cap * eltsize), cap, 1};
     slice *s = malloc(sizeof(*s));
-    assert(cap > 0 && len <= cap && b->arr && s);
-    *s = (slice){b, 0, len};
+    *s = (slice){malloc(sizeof(*s->base)), 0, len};
+    *s->base = (slice_base){malloc(cap * eltsize), cap, 1};
+    assert(cap > 0 && len <= cap && s->base->arr);
     return s;
 }
 
@@ -92,7 +91,7 @@ inline slice *
 slice_slice(slice *hdr, size_t eltsize, size_t head, size_t tail) {
     hdr->base->refs++;
     slice *s = malloc(sizeof(*s));
-    assert(s && tail <= hdr->len);
+    assert(head < tail && tail <= hdr->len && s);
     *s = (slice){hdr->base, hdr->offset + (head * eltsize), tail - head};
     return s;
 }
