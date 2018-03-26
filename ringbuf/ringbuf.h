@@ -1,0 +1,99 @@
+/* Copyright 2018 iriri. All rights reserved. Use of this source code is
+ * governed by a BSD-style license which can be found in the LICENSE file. */
+#ifndef RINGBUF_H
+#define RINGBUF_H
+#include <assert.h>
+#include <pthread.h>
+#include <stdatomic.h>
+#include <stdbool.h>
+#include <stddef.h>
+#include <stdlib.h>
+
+#define LOAD_RLX_(obj) atomic_load_explicit(obj, memory_order_relaxed)
+
+#define MACRO_CONCAT_(x, y) x##y
+#define MC_(x, y) MACRO_CONCAT_(x, y)
+
+#define ringbuf(T) MC_(ringbuf_, T)
+#define PTR_OF(T) MC_(T, ptr)
+
+#define RINGBUF_DEF(T) \
+    typedef struct ringbuf(T) { \
+        size_t cap, write; \
+        atomic_size_t read; \
+        pthread_rwlock_t lock; \
+        T buf[]; \
+    } ringbuf(T)
+#define RINGBUF_DEF_PTR(T) \
+    typedef T *PTR_OF(T); \
+    RINGBUF_DEF(PTR_OF(T))
+
+#define RINGBUF_MAKE(T, _cap) __extension__({ \
+    typeof(_cap) capX_ = _cap; \
+    ringbuf(T) *rX_ = malloc(offsetof(ringbuf(T), buf) + (_cap * sizeof(T))); \
+    assert(capX_  > 0 && (capX_ & (capX_ - 1)) == 0 && rX_->buf); \
+    rX_->write = 0; \
+    atomic_store_explicit(&rX_->read, 0, memory_order_relaxed); \
+    rX_->cap = _cap; \
+    rX_->lock = (pthread_rwlock_t)PTHREAD_RWLOCK_INITIALIZER; \
+    rX_; })
+
+#define RINGBUF_DROP(rbuf) __extension__({ \
+    typeof(rbuf) rX_ = rbuf; \
+    assert(pthread_rwlock_destroy(&rX_->lock) == 0); \
+    free(rX_); \
+    NULL; })
+
+#define RINGBUF_PUSH(rbuf, elt) __extension__({ \
+    typeof(rbuf) rX_ = rbuf; \
+    pthread_rwlock_wrlock(&rX_->lock); \
+    rX_->buf[rX_->write++ & (rX_->cap - 1)] = elt; \
+    ssize_t diffX_ = rX_->write - LOAD_RLX_(&rX_->read) - rX_->cap; \
+    if (diffX_ > 0) { \
+        atomic_fetch_add_explicit(&rX_->read, 1, memory_order_relaxed); \
+    } \
+    pthread_rwlock_unlock(&rX_->lock); \
+    diffX_ < 0; })
+
+#define RINGBUF_TRYPUSH(rbuf, elt) __extension__({ \
+    typeof(rbuf) rX_ = rbuf; \
+    pthread_rwlock_wrlock(&rX_->lock); \
+    bool retX_ = rX_->write - LOAD_RLX_(&rX_->read) != rX_->cap; \
+    if (retX_) { \
+        rX_->buf[rX_->write++ & (rX_->cap - 1)] = elt; \
+    } \
+    pthread_rwlock_unlock(&rX_->lock); \
+    retX_; })
+
+#define RINGBUF_POP(rbuf, elt) __extension__({ \
+    typeof(rbuf) rX_ = rbuf; \
+    pthread_rwlock_rdlock(&rX_->lock); \
+    size_t iX_; \
+    bool retX_; \
+    for ( ; ; ) { \
+        iX_ = atomic_load_explicit(&rX_->read, memory_order_acquire); \
+        retX_ = iX_ != rX_->write; \
+        if (retX_) { \
+            if (atomic_compare_exchange_weak(&rX_->read, &iX_, iX_ + 1)) { \
+                elt = rX_->buf[iX_ & (rX_->cap - 1)]; \
+                break; \
+            } \
+        } else { \
+            break; \
+        } \
+    } \
+    pthread_rwlock_unlock(&rX_->lock); \
+    retX_; })
+
+#define RINGBUF_PEEK(rbuf, elt) __extension__({ \
+    typeof(rbuf) rX_ = rbuf; \
+    pthread_rwlock_rdlock(&rX_->lock); \
+    size_t iX_ = atomic_load_explicit(&rX_->read, memory_order_acquire); \
+    bool retX_ = iX_ != rX_->write; \
+    if (retX_) { \
+        elt = rX_->buf[iX_ & (rX_->cap - 1)]; \
+    } \
+    pthread_rwlock_unlock(&rX_->lock); \
+    retX_; })
+
+#endif

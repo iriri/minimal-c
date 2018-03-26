@@ -19,3 +19,12 @@ but all of these are very minor. In exchange, macros that do not create a slice
 argument, saving a lot of typing and giving us much more type safety as we are
 no longer casting everything. Performance is similar between the two versions.
 See `slice_test.c` for information about usage.
+
+## minimal/ringbuf (GNU99)
+A bounded concurrent MPMC queue in 99 lines. Uses GNU extensions in the same
+manner as the GNU99 version of `slice.h`. Push returns false if the queue is
+now full and pop returns false if queue is currently empty. If pushed to when
+full, the oldest element is overwritten. Not at all well tested. Not really
+designed to be used for synchronization but it's possible to spin on trypush
+and pop if you really want to (e.g. to ensure determinism for testing). See
+`ringbuf_test.h` for information about usage.

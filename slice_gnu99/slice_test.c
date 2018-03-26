@@ -52,7 +52,7 @@ main() {
     assert(s2->base->cap == 16);
     int s2ia1[] = {4, 5, 6, 7, 8, 9};
     verify_slice(s2, s2ia1, 6);
-    DROP(s); /* should just decrease the ref count of the shared base */
+    s = DROP(s); /* should just decrease the ref count of the shared base */
     assert(s1->base->refs == 2);
 
     /* A slice with a new base array can be created from an array, such as the
@@ -95,10 +95,10 @@ main() {
     verify_slice(s4, s4ia1, 2);
     int s2ia2[] = {4, 5, 6, 0, 0, 9};
     verify_slice(s2, s2ia2, 6);
-    DROP(s1);
-    DROP(s2);
-    DROP(s3);
-    DROP(s4);
+    s1 = DROP(s1);
+    s2 = DROP(s2);
+    s3 = DROP(s3);
+    s4 = DROP(s4);
 
     /* Pointer types must be wrapped in PTR_OF (and the * must be dropped) when
      * declaring a new slice or passing a type to the slice creation macros
@@ -113,7 +113,7 @@ main() {
         (void)DROP(ARR(s5)[0]);
         REMOVE(s5, 0);
     }
-    DROP(s5);
+    s5 = DROP(s5);
 
     int s6ia[] = {0, 2, 4, 6, 8, 10, 12, 14, 16, 18};
     slice(int) *s6 = SLICE_FROM_N(s6ia, int, 0, 10, 10);
@@ -162,9 +162,9 @@ main() {
     int s10ia[] = {4, 6, 8};
     verify_slice(&s9, s9ia, 2);
     verify_slice(&s10, s10ia, 3);
-    DROP(s6);
-    DROP(s7);
-    DROP(s8);
+    s6 = DROP(s6);
+    s7 = DROP(s7);
+    s8 = DROP(s8);
 
     /*
     slice(int) *s11 = MAKE(int, 0, 512);
@@ -174,7 +174,7 @@ main() {
     printf("%d\n", ARR(s11)[256]);
     printf("%d\n", ARR(s11)[555555]);
     printf("%d\n", ARR(s11)[999999999]);
-    DROP(s11);
+    s11 = DROP(s11);
     */
 
     printf("All tests passed\n");
