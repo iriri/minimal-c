@@ -14,7 +14,6 @@
 #define slice(T) MC_(slice_, T)
 #define slice_base(T) struct slice_base_##T
 #define PTR_OF(T) MC_(T, ptr)
-
 #define SLICE_DEF(T) \
     typedef struct slice(T) { \
         slice_base(T) { \
@@ -39,6 +38,7 @@
 
 #define DROP_(slice) __extension__({ \
     if (--slice->base->refs == 0) { \
+        free(slice->base->arr); \
         free(slice->base); \
     } \
     free(slice); \

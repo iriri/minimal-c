@@ -1,13 +1,13 @@
 # minimal
 Bad single header libraries.
 
-## minimal/slice (C11)
+## slice.h (C11)
 Slices ~~in 100 lines~~. Both arrays and slices can be sliced with the same
 macros thanks to C11 generic selection. Not safe for concurrent use. Somewhat
 tested and currently being dogfooded. See `slice_test.c` for information about
 usage.
 
-## minimal/slice (GNU99)
+## slice.h (GNU99)
 A slightly different approach to slices using GNU extensions. Only GCC and
 Clang have been tested (be sure to compile with `-Wno-language-extension-token`
 if using Clang). Mostly nicer to use than the C11 version but not as tested or
@@ -20,7 +20,7 @@ argument, saving a lot of typing and giving us much more type safety as we are
 no longer casting everything. Performance is similar between the two versions.
 See `slice_test.c` for information about usage.
 
-## minimal/ringbuf (GNU99)
+## ringbuf.h (GNU99)
 A bounded concurrent MPMC queue in 99 lines. Uses GNU extensions in the same
 manner as the GNU99 version of `slice.h`. Push returns false if the queue is
 now full and pop returns false if queue is currently empty. If pushed to when
