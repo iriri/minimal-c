@@ -13,7 +13,7 @@
 
 #define slice(T) MC_(slice_, T)
 #define slice_base(T) struct slice_base_##T
-#define PTR_OF(T) MC_(T, ptr)
+#define PTR_OF(T) MC_(T, ptr_)
 #define SLICE_DEF(T) \
     typedef struct slice(T) { \
         slice_base(T) { \
@@ -44,27 +44,27 @@
     free(slice); \
     NULL; })
 #define DROP(slice) __extension__({ \
-    typeof(slice) sD_ = slice; \
+    __auto_type sD_ = slice; \
     DROP_(sD_); })
 
 #define ARR_(slice) (slice->base->arr + slice->offset)
 #define ARR(slice) __extension__({ \
-    typeof(slice) sA_ = slice; \
+    __auto_type sA_ = slice; \
     ARR_(sA_); })
 
 #define GET_(slice, index) \
     (assert((size_t)index < slice->len), ARR_(slice)[index])
 #define GET(slice, index) __extension__({ \
-    typeof(slice) sG_ = slice; \
-    typeof(index) iG_ = index; \
+    __auto_type sG_ = slice; \
+    __auto_type iG_ = index; \
     GET_(sG_, iG_); })
 
 #define PUT_(slice, index, elt) \
     (assert((size_t)index < slice->len), (void)(ARR_(slice)[index] = elt))
 #define PUT(slice, index, elt) __extension__({ \
-    typeof(slice) sP_ = slice; \
-    typeof(index) iP_ = index; \
-    typeof(elt) eP_ = elt; \
+    __auto_type sP_ = slice; \
+    __auto_type iP_ = index; \
+    __auto_type eP_ = elt; \
     PUT_(sP_, iP_, eP_); })
 
 #define GROW_(base, cap_) do { \
@@ -77,8 +77,8 @@
     } \
     ARR_(slice)[slice->len++] = elt; } while (0)
 #define APPEND(slice, elt) do { \
-    typeof(slice) sAP_ = slice; \
-    typeof(elt) eAP_ = elt; \
+    __extension__ __auto_type sAP_ = slice; \
+    __extension__ __auto_type eAP_ = elt; \
     APPEND_(sAP_, eAP_); } while (0)
 
 #define CONCAT_(slice1, slice2) do { \
@@ -90,7 +90,7 @@
             slice2.len * sizeof(*slice1->base->arr)); \
     slice1->len += slice2.len; } while (0)
 #define CONCAT(slice1, slice2) do { \
-    typeof(slice1) s1C_ = slice1; \
+    __extension__ __auto_type s1C_ = slice1; \
     typeof(*slice1) s2C_ = slice2; \
     CONCAT_(s1C_, s2C_); } while (0)
 
@@ -103,7 +103,7 @@
     sS__->len = tail - head; \
     sS__; })
 #define SLICE(slice, head, tail) __extension__({ \
-    typeof(slice) sS_ = slice; \
+    __auto_type sS_ = slice; \
     size_t hS_ = head, tS_ = tail; \
     SLICE_(sS_, hS_, tS_); })
 
@@ -126,7 +126,7 @@
     (assert(head < tail && tail <= slice->len), \
      (typeof(*slice)){slice->base, slice->offset + head, tail - head})
 #define SLICE_OF(slice, head, tail) __extension__({ \
-    typeof(slice) sSO_ = slice; \
+    __auto_type sSO_ = slice; \
     size_t headSO_ = head, tailSO_ = tail; \
     SLICE_OF_(sSO_, headSO_, tailSO_); })
 
@@ -140,8 +140,8 @@
     } \
     foundF__; })
 #define FIND(slice, elt) __extension__({ \
-    typeof(slice) sF_ = slice; \
-    typeof(elt) eF_ = elt; \
+    __auto_type sF_ = slice; \
+    __auto_type eF_ = elt; \
     FIND_(sF_, eF_); })
 
 #define REMOVE_(slice, index) __extension__({ \
@@ -162,8 +162,8 @@
     } \
     removedR_; })
 #define REMOVE(slice, index) __extension__({ \
-    typeof(slice) sR_ = slice; \
-    typeof(index) iR_ = index; \
+    __auto_type sR_ = slice; \
+    __auto_type iR_ = index; \
     REMOVE_(sR_, iR_); })
 
 #endif

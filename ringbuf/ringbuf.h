@@ -15,7 +15,7 @@
 #define MC_(x, y) MACRO_CONCAT_(x, y)
 
 #define ringbuf(T) MC_(ringbuf_, T)
-#define PTR_OF(T) MC_(T, ptr)
+#define PTR_OF(T) MC_(T, ptr_)
 
 #define RINGBUF_DEF(T) \
     typedef struct ringbuf(T) { \
@@ -28,24 +28,24 @@
     typedef T *PTR_OF(T); \
     RINGBUF_DEF(PTR_OF(T))
 
-#define RINGBUF_MAKE(T, _cap) __extension__({ \
-    typeof(_cap) capX_ = _cap; \
-    ringbuf(T) *rX_ = malloc(offsetof(ringbuf(T), buf) + (_cap * sizeof(T))); \
-    assert(capX_  > 0 && (capX_ & (capX_ - 1)) == 0 && rX_->buf); \
+#define RINGBUF_MAKE(T, cap_) __extension__({ \
+    __auto_type cX_ = cap_; \
+    ringbuf(T) *rX_ = malloc(offsetof(ringbuf(T), buf) + (cX_ * sizeof(T))); \
+    assert(cX_  > 0 && (cX_ & (cX_ - 1)) == 0 && rX_->buf); \
     rX_->write = 0; \
     atomic_store_explicit(&rX_->read, 0, memory_order_relaxed); \
-    rX_->cap = _cap; \
+    rX_->cap = cX_; \
     rX_->lock = (pthread_rwlock_t)PTHREAD_RWLOCK_INITIALIZER; \
     rX_; })
 
 #define RINGBUF_DROP(rbuf) __extension__({ \
-    typeof(rbuf) rX_ = rbuf; \
+    __auto_type rX_ = rbuf; \
     assert(pthread_rwlock_destroy(&rX_->lock) == 0); \
     free(rX_); \
     NULL; })
 
 #define RINGBUF_PUSH(rbuf, elt) __extension__({ \
-    typeof(rbuf) rX_ = rbuf; \
+    __auto_type rX_ = rbuf; \
     pthread_rwlock_wrlock(&rX_->lock); \
     rX_->buf[rX_->write++ & (rX_->cap - 1)] = elt; \
     ssize_t diffX_ = rX_->write - LOAD_RLX_(&rX_->read) - rX_->cap; \
@@ -56,7 +56,7 @@
     diffX_ < 0; })
 
 #define RINGBUF_TRYPUSH(rbuf, elt) __extension__({ \
-    typeof(rbuf) rX_ = rbuf; \
+    __auto_type rX_ = rbuf; \
     pthread_rwlock_wrlock(&rX_->lock); \
     bool retX_ = rX_->write - LOAD_RLX_(&rX_->read) != rX_->cap; \
     if (retX_) { \
@@ -66,7 +66,7 @@
     retX_; })
 
 #define RINGBUF_POP(rbuf, elt) __extension__({ \
-    typeof(rbuf) rX_ = rbuf; \
+    __auto_type rX_ = rbuf; \
     pthread_rwlock_rdlock(&rX_->lock); \
     size_t iX_; \
     bool retX_; \
@@ -86,7 +86,7 @@
     retX_; })
 
 #define RINGBUF_PEEK(rbuf, elt) __extension__({ \
-    typeof(rbuf) rX_ = rbuf; \
+    __auto_type rX_ = rbuf; \
     pthread_rwlock_rdlock(&rX_->lock); \
     size_t iX_ = atomic_load_explicit(&rX_->read, memory_order_acquire); \
     bool retX_ = iX_ != rX_->write; \
