@@ -69,18 +69,18 @@ main() {
 
     pthread_t pool[THREADC];
     rbuf = RINGBUF_MAKE(int, 2);
-    for (unsigned i = 0; i < THREADC; i++) {
+    for (int i = 0; i < THREADC; i++) {
         assert(pthread_create(pool + i, NULL, adder, rbuf) == 0);
     }
     for (int i = 1; i <= 100000; i++) {
         while (!RINGBUF_TRYPUSH(rbuf, i));
     }
-    for (unsigned i = 0; i < THREADC; i++) {
+    for (int i = 0; i < THREADC; i++) {
         while (!RINGBUF_TRYPUSH(rbuf, -1));
     }
     unsigned long long sum = 0;
     unsigned long long *r;
-    for (unsigned i = 0; i < THREADC; i++) {
+    for (int i = 0; i < THREADC; i++) {
         assert(pthread_join(pool[i], (void **)&r) == 0);
         sum += *r;
     }

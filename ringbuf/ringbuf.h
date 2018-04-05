@@ -58,7 +58,7 @@
 #define RINGBUF_TRYPUSH(rbuf, elt) __extension__({ \
     __auto_type rX_ = rbuf; \
     pthread_rwlock_wrlock(&rX_->lock); \
-    bool retX_ = rX_->write - LOAD_RLX_(&rX_->read) != rX_->cap; \
+    bool retX_ = rX_->write - LOAD_RLX_(&rX_->read) < rX_->cap; \
     if (retX_) { \
         rX_->buf[rX_->write++ & (rX_->cap - 1)] = elt; \
     } \

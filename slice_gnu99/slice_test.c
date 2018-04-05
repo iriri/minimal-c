@@ -105,7 +105,7 @@ main() {
      * that take a type as an argument. Otherwise storing pointers is just as
      * simple as storing any other type */
     slice(PTR_OF(slice(int))) *s5 = MAKE(PTR_OF(slice(int)), 0, 1);
-    for (unsigned i = 0; i < 129; i++) {
+    for (int i = 0; i < 129; i++) {
         APPEND(s5, MAKE(int, 0, 2));
     }
     assert(s5->base->cap == 256);
@@ -168,7 +168,7 @@ main() {
 
     /*
     slice(int) *s11 = MAKE(int, 0, 512);
-    for (unsigned i = 0; i < 1000000000; i++) {
+    for (int i = 0; i < 1000000000; i++) {
         APPEND(s11, i);
     }
     printf("%d\n", ARR(s11)[256]);

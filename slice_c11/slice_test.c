@@ -104,7 +104,7 @@ main() {
 
     /* MAKE returns a pointer because it's better for composition */
     slice *s5 = MAKE(slice *, 0, 1);
-    for (unsigned i = 0; i < 129; i++) {
+    for (int i = 0; i < 129; i++) {
         APPEND(s5, slice *, MAKE(int, 0, 2));
     }
     assert(s5->base->cap == 256);
@@ -167,7 +167,7 @@ main() {
 
     /*
     slice *s11 = MAKE(int, 0, 512);
-    for (unsigned i = 0; i < 1000000000; i++) {
+    for (int i = 0; i < 1000000000; i++) {
         APPEND(s11, int, i);
     }
     printf("%d\n", INDEX(s11, int, 256));

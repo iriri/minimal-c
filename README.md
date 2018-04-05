@@ -2,10 +2,10 @@
 Bad single header libraries.
 
 ## slice.h (C11)
-Slices ~~in 100 lines~~. Both arrays and slices can be sliced with the same
-macros thanks to C11 generic selection. Not safe for concurrent use. Somewhat
-tested and currently being dogfooded. See `slice_test.c` for information about
-usage.
+Slices without preprocessor cancer. Both arrays and slices can be sliced with
+the same macros thanks to C11 generic selection. Not safe for concurrent use.
+Somewhat tested and currently being dogfooded. See `slice_test.c` for
+information about usage.
 
 ## slice.h (GNU99)
 A slightly different approach to slices using GNU extensions. Only GCC and
@@ -28,3 +28,6 @@ full, the oldest element is overwritten. Not at all well tested. Not really
 designed to be used for synchronization but it's possible to spin on trypush
 and pop if you really want to (e.g. to ensure determinism for testing). See
 `ringbuf_test.h` for information about usage.
+
+## channel.h (GNU99)
+Not done; not tested; don't use.
