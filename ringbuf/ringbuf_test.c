@@ -14,7 +14,7 @@ adder(void *arg) {
     unsigned long long sum = 0;
     for ( ; ; ) {
         /* clang warns about this line; seems like it could be a bug */
-        while (!RINGBUF_POP(rbuf, i));
+        while (!rbuf_shift(rbuf, i));
         if (i == -1) {
             break;
         }
@@ -29,54 +29,54 @@ adder(void *arg) {
 int
 main() {
     int i;
-    ringbuf(int) *rbuf = RINGBUF_MAKE(int, 4);
-    assert(RINGBUF_PUSH(rbuf, 0));
-    assert(RINGBUF_PEEK(rbuf, i));
+    ringbuf(int) *rbuf = rbuf_make(int, 4);
+    assert(rbuf_push(rbuf, 0));
+    assert(rbuf_peek(rbuf, i));
     assert(i == 0);
-    assert(RINGBUF_PUSH(rbuf, -1));
-    assert(RINGBUF_POP(rbuf, i));
-    assert(RINGBUF_PUSH(rbuf, -2));
-    assert(RINGBUF_PUSH(rbuf, -3));
-    assert(!RINGBUF_PUSH(rbuf, -4));
-    assert(!RINGBUF_PUSH(rbuf, -5));
-    assert(!RINGBUF_PUSH(rbuf, -6));
-    assert(RINGBUF_POP(rbuf, i));
+    assert(rbuf_push(rbuf, -1));
+    assert(rbuf_shift(rbuf, i));
+    assert(rbuf_push(rbuf, -2));
+    assert(rbuf_push(rbuf, -3));
+    assert(!rbuf_push(rbuf, -4));
+    assert(!rbuf_push(rbuf, -5));
+    assert(!rbuf_push(rbuf, -6));
+    assert(rbuf_shift(rbuf, i));
     assert(i == -3);
-    assert(RINGBUF_POP(rbuf, i));
+    assert(rbuf_shift(rbuf, i));
     assert(i == -4);
-    assert(RINGBUF_POP(rbuf, i));
+    assert(rbuf_shift(rbuf, i));
     assert(i == -5);
-    assert(RINGBUF_POP(rbuf, i));
+    assert(rbuf_shift(rbuf, i));
     assert(i == -6);
-    assert(!RINGBUF_POP(rbuf, i));
-    rbuf = RINGBUF_DROP(rbuf);
+    assert(!rbuf_shift(rbuf, i));
+    rbuf = rbuf_drop(rbuf);
 
-    rbuf = RINGBUF_MAKE(int, 512);
-    for (int i = 0; RINGBUF_PUSH(rbuf, i); i--);
+    rbuf = rbuf_make(int, 512);
+    for (int i = 0; rbuf_push(rbuf, i); i--);
     int j;
-    for (int i = 0; RINGBUF_POP(rbuf, j); i--) {
+    for (int i = 0; rbuf_shift(rbuf, j); i--) {
         assert(i == j);
     }
-    rbuf = RINGBUF_DROP(rbuf);
+    rbuf = rbuf_drop(rbuf);
 
     /* same deal as slice.h unfortunately */
-    ringbuf(PTR_OF(int)) *rbufp = RINGBUF_MAKE(PTR_OF(int), 1);
-    assert(!RINGBUF_PUSH(rbufp, &j));
+    ringbuf(PTR_OF(int)) *rbufp = rbuf_make(PTR_OF(int), 1);
+    assert(!rbuf_push(rbufp, &j));
     int *k;
-    assert(RINGBUF_POP(rbufp, k));
+    assert(rbuf_shift(rbufp, k));
     assert(&j == k);
-    rbufp = RINGBUF_DROP(rbufp);
+    rbufp = rbuf_drop(rbufp);
 
     pthread_t pool[THREADC];
-    rbuf = RINGBUF_MAKE(int, 2);
+    rbuf = rbuf_make(int, 2);
     for (int i = 0; i < THREADC; i++) {
         assert(pthread_create(pool + i, NULL, adder, rbuf) == 0);
     }
     for (int i = 1; i <= 100000; i++) {
-        while (!RINGBUF_TRYPUSH(rbuf, i));
+        while (!rbuf_trypush(rbuf, i));
     }
     for (int i = 0; i < THREADC; i++) {
-        while (!RINGBUF_TRYPUSH(rbuf, -1));
+        while (!rbuf_trypush(rbuf, -1));
     }
     unsigned long long sum = 0;
     unsigned long long *r;
