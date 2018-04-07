@@ -17,13 +17,16 @@
 #define CH_WBLOCK 0x8
 #define CH_CLOSED 0x10
 
+#ifndef MINIMAL_
+#define MINIMAL_
 #define MACRO_CONCAT_(x, y) x##y
 #define MC_(x, y) MACRO_CONCAT_(x, y)
+#define PTR_OF(T) MC_(T, ptr)
+#endif
 
 #define channel(T) MC_(channel_, T)
 #define channel_buf_(T) MC_(channel_buf_, T)
 #define channel_unbuf_(T) MC_(channel_unbuf_, T)
-#define PTR_OF(T) MC_(T, ptr)
 
 #define CHANNEL_HDR_ \
     size_t cap, write, read; \
@@ -60,7 +63,7 @@
                          (capX_ * sizeof(T))); \
         assert((capX_ & (capX_ - 1)) == 0 && cX_); \
     } else { \
-        assert(cX_ = malloc(sizeof(channel_unbuf_(T)))); \
+        assert((cX_ = malloc(sizeof(channel_unbuf_(T))))); \
     } \
     cX_->hdr.cap = capX_; \
     cX_->hdr.write = cX_->hdr.read = 0; \

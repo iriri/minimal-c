@@ -1,15 +1,14 @@
 # minimal
 Bad single header libraries. Mostly implemented via mild preprocessor cancer
-and light GNU extension abuse. Only GCC and Clang have been tested so far. (You
-may want to compile with `-Wno-macro-redefined` if using more than one of these
-headers, and `-Wno-language-extension-token` if using Clang.)
+and light GNU extension abuse. Only GCC and Clang have been tested so far.
 
 ## channel.h (GNU99)
 Go-style channels with some minor changes to make the multi-producer use case
-more pleasant. `ch_select`is kind of terrible right now but nonblocking sends
+more pleasant. `ch_select` is kind of terrible right now but nonblocking sends
 and receives can be done by just using `ch_trysend` and `ch_tryrecv` outside of
-`ch_select`. Not really tested very well yet. See `channel_test.c` for
-information about usage.
+`ch_select`. (As `ch_select` is just a thinly veiled Duff's Device you'll need
+to compile with `-Wno-implicit-fallthrough` to avoid warnings from GCC.) Not
+really tested very well yet. See `channel_test.c` for information about usage.
 
 ## slice.h (GNU99)
 A sliceable vector type. Not safe for concurrent use. Somewhat tested. See

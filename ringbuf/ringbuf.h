@@ -9,13 +9,14 @@
 #include <stddef.h>
 #include <stdlib.h>
 
-#define LOAD_RLX_(obj) atomic_load_explicit(obj, memory_order_relaxed)
-
+#ifndef MINIMAL_
+#define MINIMAL_
 #define MACRO_CONCAT_(x, y) x##y
 #define MC_(x, y) MACRO_CONCAT_(x, y)
+#define PTR_OF(T) MC_(T, ptr)
+#endif
 
 #define ringbuf(T) MC_(ringbuf_, T)
-#define PTR_OF(T) MC_(T, ptr_)
 
 #define RINGBUF_DEF(T) \
     typedef struct ringbuf(T) { \
@@ -27,6 +28,8 @@
 #define RINGBUF_DEF_PTR(T) \
     typedef T *PTR_OF(T); \
     RINGBUF_DEF(PTR_OF(T))
+
+#define LOAD_RLX_(obj) atomic_load_explicit(obj, memory_order_relaxed)
 
 #define rbuf_make(T, cap_) __extension__({ \
     __auto_type cX_ = cap_; \

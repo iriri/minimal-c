@@ -77,6 +77,7 @@ main() {
     for (int i = 0; i < THREADC; i++) {
         assert(pthread_join(pool[i], (void **)&r) == 0);
         sum += *r;
+        free(r);
     }
     printf("%llu\n", sum);
     assert(sum == ((100000ull * 100001ull)/2));
@@ -94,6 +95,7 @@ main() {
     for (int i = 0; i < THREADC; i++) {
         assert(pthread_join(pool[i], (void **)&r) == 0);
         sum += *r;
+        free(r);
     }
     printf("%llu\n", sum);
     assert(sum == ((100000ull * 100001ull)/2));
@@ -116,20 +118,20 @@ main() {
                     printf("1, %d\n", ir);
                     assert(ir == 1);
             });
-            ch_case(2, ch_tryrecv(chanpool[2], ir), assert(ir = 2));
-            ch_case(3, ch_tryrecv(chanpool[3], ir), assert(ir = 3));
-            ch_case(4, ch_tryrecv(chanpool[4], ir), assert(ir = 4));
-            ch_case(5, ch_tryrecv(chanpool[5], ir), assert(ir = 5));
-            ch_case(6, ch_tryrecv(chanpool[6], ir), assert(ir = 6));
-            ch_case(7, ch_tryrecv(chanpool[7], ir), assert(ir = 7));
-            ch_case(8, ch_tryrecv(chanpool[8], ir), assert(ir = 8));
-            ch_case(9, ch_tryrecv(chanpool[9], ir), assert(ir = 9));
-            ch_case(10, ch_tryrecv(chanpool[10], ir), assert(ir = 10));
-            ch_case(11, ch_tryrecv(chanpool[11], ir), assert(ir = 11));
-            ch_case(12, ch_tryrecv(chanpool[12], ir), assert(ir = 12));
-            ch_case(13, ch_tryrecv(chanpool[13], ir), assert(ir = 13));
-            ch_case(14, ch_tryrecv(chanpool[14], ir), assert(ir = 14));
-            ch_case(15, ch_tryrecv(chanpool[15], ir), assert(ir = 15));
+            ch_case(2, ch_tryrecv(chanpool[2], ir), assert(ir == 2));
+            ch_case(3, ch_tryrecv(chanpool[3], ir), assert(ir == 3));
+            ch_case(4, ch_tryrecv(chanpool[4], ir), assert(ir == 4));
+            ch_case(5, ch_tryrecv(chanpool[5], ir), assert(ir == 5));
+            ch_case(6, ch_tryrecv(chanpool[6], ir), assert(ir == 6));
+            ch_case(7, ch_tryrecv(chanpool[7], ir), assert(ir == 7));
+            ch_case(8, ch_tryrecv(chanpool[8], ir), assert(ir == 8));
+            ch_case(9, ch_tryrecv(chanpool[9], ir), assert(ir == 9));
+            ch_case(10, ch_tryrecv(chanpool[10], ir), assert(ir == 10));
+            ch_case(11, ch_tryrecv(chanpool[11], ir), assert(ir == 11));
+            ch_case(12, ch_tryrecv(chanpool[12], ir), assert(ir == 12));
+            ch_case(13, ch_tryrecv(chanpool[13], ir), assert(ir == 13));
+            ch_case(14, ch_tryrecv(chanpool[14], ir), assert(ir == 14));
+            ch_case(15, ch_tryrecv(chanpool[15], ir), assert(ir == 15));
             ch_default({
                 printf("default\n");
             });
@@ -140,6 +142,7 @@ main() {
         assert(pthread_join(pool[i], NULL) == 0);
         chanpool[i] = ch_drop(chanpool[i]);
     }
+    chanp = ch_drop(chanp);
 
     printf("All tests passed\n");
 }

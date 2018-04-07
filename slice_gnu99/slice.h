@@ -8,12 +8,16 @@
 #include <stdlib.h>
 #include <string.h>
 
+#ifndef MINIMAL_
+#define MINIMAL_
 #define MACRO_CONCAT_(x, y) x##y
 #define MC_(x, y) MACRO_CONCAT_(x, y)
+#define PTR_OF(T) MC_(T, ptr)
+#endif
 
 #define slice(T) MC_(slice_, T)
 #define slice_base(T) struct slice_base_##T
-#define PTR_OF(T) MC_(T, ptr_)
+
 #define SLICE_DEF(T) \
     typedef struct slice(T) { \
         slice_base(T) { \
@@ -91,12 +95,12 @@
     slice1->len += slice2.len; } while (0)
 #define s_concat(slice1, slice2) do { \
     __extension__ __auto_type s1C_ = slice1; \
-    typeof(*slice1) s2C_ = slice2; \
+    __typeof__(*slice1) s2C_ = slice2; \
     s_concat_(s1C_, s2C_); } while (0)
 
 #define s_slice_(slice, head, tail) __extension__({ \
     slice->base->refs++; \
-    typeof(slice) sS__ = malloc(sizeof(*sS__)); \
+    __typeof__(slice) sS__ = malloc(sizeof(*sS__)); \
     assert(head < tail && tail <= slice->len && sS__); \
     sS__->base = slice->base; \
     sS__->offset = slice->offset + head; \
@@ -124,7 +128,7 @@
 
 #define s_slice_of_(slice, head, tail) \
     (assert(head < tail && tail <= slice->len), \
-     (typeof(*slice)){slice->base, slice->offset + head, tail - head})
+     (__typeof__(*slice)){slice->base, slice->offset + head, tail - head})
 #define s_slice_of(slice, head, tail) __extension__({ \
     __auto_type sSO_ = slice; \
     size_t headSO_ = head, tailSO_ = tail; \

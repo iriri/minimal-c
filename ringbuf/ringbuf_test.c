@@ -13,7 +13,7 @@ adder(void *arg) {
     int i;
     unsigned long long sum = 0;
     for ( ; ; ) {
-        /* clang warns about this line; seems like it could be a bug */
+        /* older versions of clang warn about this line */
         while (!rbuf_shift(rbuf, i));
         if (i == -1) {
             break;

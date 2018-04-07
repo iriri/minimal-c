@@ -23,7 +23,7 @@ void *
 filter(void *args) {
     channel(int) *chan_in = ((channel(int) **)args)[0];
     channel(int) *chan_out = ((channel(int) **)args)[1];
-    int p = (int)((void **)args)[2];
+    int p = (intptr_t)((void **)args)[2];
     free(args);
 
     int i;
@@ -42,7 +42,7 @@ main() {
     pthread_t gen, fltrpool[THREADC];
     pthread_create(&gen, NULL, generate, chan);
 
-    int p;
+    int p = 0;
     for (int i = 0; i < THREADC; i++) {
         ch_recv(chan, p);
         s_append(primes, p);
