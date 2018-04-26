@@ -32,71 +32,68 @@
 #define LOAD_RLX_(obj) atomic_load_explicit(obj, memory_order_relaxed)
 
 #define rbuf_make(T, cap_) __extension__({ \
-    __auto_type cX_ = cap_; \
-    ringbuf(T) *rX_ = malloc(offsetof(ringbuf(T), buf) + (cX_ * sizeof(T))); \
-    assert(cX_  > 0 && (cX_ & (cX_ - 1)) == 0 && rX_->buf); \
-    rX_->write = 0; \
-    atomic_store_explicit(&rX_->read, 0, memory_order_relaxed); \
-    rX_->cap = cX_; \
-    rX_->lock = (pthread_rwlock_t)PTHREAD_RWLOCK_INITIALIZER; \
-    rX_; })
+    __auto_type Xcap_ = cap_; \
+    ringbuf(T) *Xr_ = \
+        calloc(1, offsetof(ringbuf(T), buf) + (Xcap_ * sizeof(T))); \
+    assert(Xcap_  > 0 && (Xcap_ & (Xcap_ - 1)) == 0 && Xr_->buf); \
+    Xr_->cap = Xcap_; \
+    Xr_->lock = (pthread_rwlock_t)PTHREAD_RWLOCK_INITIALIZER; \
+    Xr_; })
 
 #define rbuf_drop(rbuf) __extension__({ \
-    __auto_type rX_ = rbuf; \
-    assert(pthread_rwlock_destroy(&rX_->lock) == 0); \
-    free(rX_); \
+    __auto_type Xr_ = rbuf; \
+    assert(pthread_rwlock_destroy(&Xr_->lock) == 0); \
+    free(Xr_); \
     NULL; })
 
 #define rbuf_push(rbuf, elt) __extension__({ \
-    __auto_type rX_ = rbuf; \
-    pthread_rwlock_wrlock(&rX_->lock); \
-    rX_->buf[rX_->write++ & (rX_->cap - 1)] = elt; \
-    ssize_t diffX_ = rX_->write - LOAD_RLX_(&rX_->read) - rX_->cap; \
-    if (diffX_ > 0) { \
-        atomic_fetch_add_explicit(&rX_->read, 1, memory_order_relaxed); \
+    __auto_type Xr_ = rbuf; \
+    pthread_rwlock_wrlock(&Xr_->lock); \
+    Xr_->buf[Xr_->write++ & (Xr_->cap - 1)] = elt; \
+    ssize_t Xdiff_ = Xr_->write - LOAD_RLX_(&Xr_->read) - Xr_->cap; \
+    if (Xdiff_ > 0) { \
+        atomic_fetch_add_explicit(&Xr_->read, 1, memory_order_relaxed); \
     } \
-    pthread_rwlock_unlock(&rX_->lock); \
-    diffX_ < 0; })
+    pthread_rwlock_unlock(&Xr_->lock); \
+    Xdiff_ < 0; })
 
 #define rbuf_trypush(rbuf, elt) __extension__({ \
-    __auto_type rX_ = rbuf; \
-    pthread_rwlock_wrlock(&rX_->lock); \
-    bool retX_ = rX_->write - LOAD_RLX_(&rX_->read) < rX_->cap; \
-    if (retX_) { \
-        rX_->buf[rX_->write++ & (rX_->cap - 1)] = elt; \
+    __auto_type Xr_ = rbuf; \
+    pthread_rwlock_wrlock(&Xr_->lock); \
+    bool Xnot_full_ = Xr_->write - LOAD_RLX_(&Xr_->read) < Xr_->cap; \
+    if (Xnot_full_) { \
+        Xr_->buf[Xr_->write++ & (Xr_->cap - 1)] = elt; \
     } \
-    pthread_rwlock_unlock(&rX_->lock); \
-    retX_; })
+    pthread_rwlock_unlock(&Xr_->lock); \
+    Xnot_full_; })
 
 #define rbuf_shift(rbuf, elt) __extension__({ \
-    __auto_type rX_ = rbuf; \
-    pthread_rwlock_rdlock(&rX_->lock); \
-    size_t iX_; \
-    bool retX_; \
+    __auto_type Xr_ = rbuf; \
+    pthread_rwlock_rdlock(&Xr_->lock); \
+    bool Xnot_empty_; \
     for ( ; ; ) { \
-        iX_ = atomic_load_explicit(&rX_->read, memory_order_acquire); \
-        retX_ = iX_ != rX_->write; \
-        if (retX_) { \
-            if (atomic_compare_exchange_weak(&rX_->read, &iX_, iX_ + 1)) { \
-                elt = rX_->buf[iX_ & (rX_->cap - 1)]; \
+        size_t Xi_ = atomic_load_explicit(&Xr_->read, memory_order_acquire); \
+        if ((Xnot_empty_ = Xi_ != Xr_->write)) { \
+            if (atomic_compare_exchange_weak(&Xr_->read, &Xi_, Xi_ + 1)) { \
+                elt = Xr_->buf[Xi_ & (Xr_->cap - 1)]; \
                 break; \
             } \
         } else { \
             break; \
         } \
     } \
-    pthread_rwlock_unlock(&rX_->lock); \
-    retX_; })
+    pthread_rwlock_unlock(&Xr_->lock); \
+    Xnot_empty_; })
 
 #define rbuf_peek(rbuf, elt) __extension__({ \
-    __auto_type rX_ = rbuf; \
-    pthread_rwlock_rdlock(&rX_->lock); \
-    size_t iX_ = atomic_load_explicit(&rX_->read, memory_order_acquire); \
-    bool retX_ = iX_ != rX_->write; \
-    if (retX_) { \
-        elt = rX_->buf[iX_ & (rX_->cap - 1)]; \
+    __auto_type Xr_ = rbuf; \
+    pthread_rwlock_rdlock(&Xr_->lock); \
+    size_t Xi_ = atomic_load_explicit(&Xr_->read, memory_order_acquire); \
+    bool Xnot_empty_ = Xi_ != Xr_->write; \
+    if (Xnot_empty_) { \
+        elt = Xr_->buf[Xi_ & (Xr_->cap - 1)]; \
     } \
-    pthread_rwlock_unlock(&rX_->lock); \
-    retX_; })
+    pthread_rwlock_unlock(&Xr_->lock); \
+    Xnot_empty_; })
 
 #endif

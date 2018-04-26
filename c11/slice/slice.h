@@ -16,42 +16,46 @@ typedef struct slice_hdr {
     size_t offset, len;
 } slice;
 
-#define MAKE(type, len, cap) slice_make(sizeof(type), len, cap)
-#define DROP(hdr) slice_drop(hdr)
+#define s_make(type, len, cap) slice_make(sizeof(type), len, cap)
+#define s_drop(hdr) slice_drop(hdr)
 
-#define SLICE(hdr, type, head, tail) slice_slice(hdr, sizeof(type), head, tail)
-#define SLICE_FROM_N(T, type, head, tail, cap) _Generic((T), \
-    slice *: slice_from, \
-    default: slice_from_)(T, sizeof(type), head, tail, cap)
-#define SLICE_FROM(arr, type, head, tail) \
-    SLICE_FROM_N(arr, type, head, tail, 2 * (tail - head))
-#define SLICE_OF(T, type, head, tail) _Generic((T), \
-    slice *: slice_of, \
-    default: slice_of_arr)(T, sizeof(type), head, tail)
+#define s_slice(hdr, type, head, tail) \
+    slice_slice(hdr, sizeof(type), head, tail)
+#define s_slice_from_n(T, type, head, tail, cap) _Generic((T), \
+    slice *: slice_slice_from, \
+    default: slice_slice_from_)(T, sizeof(type), head, tail, cap)
+#define s_slice_from(arr, type, head, tail) \
+    s_slice_from_n(arr, type, head, tail, 2 * (tail - head))
+#define s_slice_of(T, type, head, tail) _Generic((T), \
+    slice *: slice_slice_of, \
+    default: slice_slice_of_arr)(T, sizeof(type), head, tail)
 
-#define ARR(hdr) slice_arr(hdr)
-#define INDEX(hdr, type, index) ((type *)ARR(hdr))[index]
-#define PUT(hdr, type, index, elt) \
-    *(type *)slice_index(hdr, sizeof(type), index) = elt
-#define GET(hdr, type, index) *(type *)slice_index(hdr, sizeof(type), index)
+#define s_arr(hdr) slice_arr(hdr)
+#define s_index(hdr, type, index) ((type *)slice_arr(hdr))[index]
+#define s_put(hdr, type, index, elt) \
+    *(type *)slice_index_safe(hdr, sizeof(type), index) = elt
+#define s_get(hdr, type, index) \
+    *(type *)slice_index_safe(hdr, sizeof(type), index)
 
-#define APPEND(hdr, type, elt) *(type *)slice_append(hdr, sizeof(type)) = elt
-#define CONCAT(s1, T, type) _Generic((T), \
+#define s_append(hdr, type, elt) *(type *)slice_append(hdr, sizeof(type)) = elt
+#define s_concat(s1, T, type) _Generic((T), \
     slice *: slice_concat, \
     slice: slice_concat_)(s1, T, sizeof(type))
-#define FIND(hdr, type, elt) slice_find(hdr, sizeof(type), &elt)
-#define REMOVE(hdr, type, index) slice_remove(hdr, sizeof(type), index)
+#define s_find(hdr, type, elt) slice_find(hdr, sizeof(type), &elt)
+#define s_remove(hdr, type, index) slice_remove(hdr, sizeof(type), index)
 
 #define SLICE_EXTERN_DECL \
     extern inline slice *slice_make(size_t, size_t, size_t); \
     extern inline void *slice_drop(slice *); \
     extern inline char *slice_arr(slice *); \
     extern inline slice *slice_slice(slice *, size_t, size_t, size_t); \
-    extern inline slice *slice_from_(void *, size_t, size_t, size_t, size_t); \
-    extern inline slice *slice_from(slice *, size_t, size_t, size_t, size_t); \
-    extern inline slice slice_of(slice *, size_t, size_t, size_t); \
-    extern inline slice slice_of_arr(void *, size_t, size_t, size_t); \
-    extern inline void *slice_index(slice *, size_t, size_t); \
+    extern inline slice *slice_slice_from_(void *, size_t, size_t, size_t, \
+                                           size_t); \
+    extern inline slice *slice_slice_from(slice *, size_t, size_t, size_t, \
+                                          size_t); \
+    extern inline slice slice_slice_of(slice *, size_t, size_t, size_t); \
+    extern inline slice slice_slice_of_arr(void *, size_t, size_t, size_t); \
+    extern inline void *slice_index_safe(slice *, size_t, size_t); \
     extern inline void slice_grow(slice *, size_t, size_t); \
     extern inline void *slice_append(slice *, size_t); \
     extern inline void slice_concat_(slice *, slice, size_t); \
@@ -97,20 +101,20 @@ slice_slice(slice *hdr, size_t eltsize, size_t head, size_t tail) {
 }
 
 inline slice
-slice_of(slice *hdr, size_t eltsize, size_t head, size_t tail) {
+slice_slice_of(slice *hdr, size_t eltsize, size_t head, size_t tail) {
     assert(head < tail && tail <= hdr->len);
     return (slice){hdr->base, hdr->offset + (head * eltsize), tail - head};
 }
 
 inline slice
-slice_of_arr(void *arr, size_t eltsize, size_t head, size_t tail) {
+slice_slice_of_arr(void *arr, size_t eltsize, size_t head, size_t tail) {
     assert(head < tail);
     slice_tmp_base_.arr = (char *)arr + (head * eltsize);
     return (slice){&slice_tmp_base_, 0, tail - head};
 }
 
 inline slice *
-slice_from_(void *arr, size_t eltsize, size_t head, size_t tail, size_t cap) {
+slice_slice_from_(void *arr, size_t eltsize, size_t head, size_t tail, size_t cap) {
     assert(head < tail && tail - head <= cap);
     slice *s = slice_make(eltsize, tail - head, cap);
     memcpy(s->base->arr, (char *)arr + (head * eltsize), s->len * eltsize);
@@ -118,14 +122,14 @@ slice_from_(void *arr, size_t eltsize, size_t head, size_t tail, size_t cap) {
 }
 
 inline slice *
-slice_from(slice *hdr, size_t eltsize, size_t head, size_t tail, size_t cap) {
-    return slice_from_(ARR(hdr), eltsize, head, tail, cap);
+slice_slice_from(slice *hdr, size_t eltsize, size_t head, size_t tail, size_t cap) {
+    return slice_slice_from_(slice_arr(hdr), eltsize, head, tail, cap);
 }
 
 inline void *
-slice_index(slice *hdr, size_t eltsize, size_t index) {
+slice_index_safe(slice *hdr, size_t eltsize, size_t index) {
     assert(index < hdr->len);
-    return ARR(hdr) + (index * eltsize);
+    return slice_arr(hdr) + (index * eltsize);
 }
 
 inline void
@@ -139,7 +143,7 @@ slice_append(slice *hdr, size_t eltsize) {
     if (hdr->len == hdr->base->cap - (hdr->offset / eltsize)) {
         slice_grow(hdr, eltsize, 2 * hdr->base->cap);
     }
-    return ARR(hdr) + (hdr->len++ * eltsize);
+    return slice_arr(hdr) + (hdr->len++ * eltsize);
 }
 
 inline void
@@ -149,7 +153,8 @@ slice_concat_(slice *s1, slice s2, size_t eltsize) {
                    s1->base->cap + (s1->base->cap > s2.base->cap ?
                                         s1->base->cap : s2.base->cap));
     }
-    memmove(ARR(s1) + (s1->len * eltsize), ARR(&s2), s2.len * eltsize);
+    memmove(slice_arr(s1) + (s1->len * eltsize), slice_arr(&s2),
+            s2.len * eltsize);
     s1->len += s2.len;
 }
 
@@ -161,7 +166,7 @@ slice_concat(slice *s1, slice *s2, size_t eltsize) {
 inline long long
 slice_find(slice *hdr, size_t eltsize, void *elt) {
     for (size_t i = 0; i < hdr->len; i++) {
-        if (memcmp(ARR(hdr) + (i * eltsize), elt, eltsize) == 0) {
+        if (memcmp(slice_arr(hdr) + (i * eltsize), elt, eltsize) == 0) {
             return i;
         }
     }
@@ -181,8 +186,8 @@ slice_remove(slice *hdr, size_t eltsize, long long index) {
     }
     assert(i <= hdr->len);
     if (i != hdr->len) {
-        memmove(ARR(hdr) + (i * eltsize),
-                ARR(hdr) + (i * eltsize) + eltsize,
+        memmove(slice_arr(hdr) + (i * eltsize),
+                slice_arr(hdr) + (i * eltsize) + eltsize,
                 (hdr->len - i) * eltsize);
     }
 }

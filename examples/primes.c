@@ -5,7 +5,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include "../channel/channel.h"
-#include "../slice_gnu99/slice.h"
+#include "../slice/slice.h"
 
 SLICE_DEF(int);
 CHANNEL_DEF(int);

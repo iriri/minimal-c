@@ -25,252 +25,223 @@
 #endif
 
 #define channel(T) MC_(channel_, T)
-#define channel_buf_(T) MC_(channel_buf_, T)
-#define channel_unbuf_(T) MC_(channel_unbuf_, T)
-
-#define CHANNEL_HDR_ \
-    size_t cap, write, read; \
-    pthread_mutex_t lock, wlock, rlock; \
-    pthread_cond_t empty, full; \
-    uint16_t refs; \
-    bool closed
 
 #define CHANNEL_DEF(T) \
-    typedef struct channel_buf_(T) { \
-        CHANNEL_HDR_; \
+    typedef struct channel(T) { \
+        size_t cap, write, read; \
+        pthread_mutex_t lock, wlock, rlock; \
+        pthread_cond_t empty, full; \
+        uint16_t refs; \
+        bool closed; \
         T buf[]; \
-    } channel_buf_(T); \
-    typedef struct channel_unbuf_(T) { \
-        CHANNEL_HDR_; \
-        T elt; \
-    } channel_unbuf_(T); \
-    typedef union channel(T) { \
-        struct { \
-            CHANNEL_HDR_; \
-        } hdr; \
-        channel_buf_(T) buf; \
-        channel_unbuf_(T) unbuf; \
     } channel(T)
 #define CHANNEL_DEF_PTR(T) \
     typedef T *PTR_OF(T); \
     CHANNEL_DEF(PTR_OF(T))
 
 #define ch_make(T, cap_) __extension__({ \
-    __auto_type capX_ = cap_; \
-    channel(T) *cX_; \
-    if (capX_ > 0) { \
-        cX_ = malloc(offsetof(channel_buf_(T), buf) + \
-                         (capX_ * sizeof(T))); \
-        assert((capX_ & (capX_ - 1)) == 0 && cX_); \
-    } else { \
-        assert((cX_ = malloc(sizeof(channel_unbuf_(T))))); \
-    } \
-    cX_->hdr.cap = capX_; \
-    cX_->hdr.write = cX_->hdr.read = 0; \
-    cX_->hdr.lock = (pthread_mutex_t)PTHREAD_MUTEX_INITIALIZER; \
-    cX_->hdr.wlock = (pthread_mutex_t)PTHREAD_MUTEX_INITIALIZER; \
-    cX_->hdr.rlock = (pthread_mutex_t)PTHREAD_MUTEX_INITIALIZER; \
-    cX_->hdr.empty = (pthread_cond_t)PTHREAD_COND_INITIALIZER; \
-    cX_->hdr.full = (pthread_cond_t)PTHREAD_COND_INITIALIZER; \
-    cX_->hdr.refs = 1; \
-    cX_->hdr.closed = false; \
-    cX_; })
+    __auto_type Xcap_ = cap_; \
+    channel(T) *Xc_ = calloc(1, offsetof(channel(T), buf) + \
+                                    ((Xcap_ ? Xcap_ : 1) * sizeof(T))); \
+    assert((Xcap_ & (Xcap_ - 1)) == 0 && Xc_); \
+    Xc_->cap = Xcap_; \
+    Xc_->lock = (pthread_mutex_t)PTHREAD_MUTEX_INITIALIZER; \
+    Xc_->wlock = (pthread_mutex_t)PTHREAD_MUTEX_INITIALIZER; \
+    Xc_->rlock = (pthread_mutex_t)PTHREAD_MUTEX_INITIALIZER; \
+    Xc_->empty = (pthread_cond_t)PTHREAD_COND_INITIALIZER; \
+    Xc_->full = (pthread_cond_t)PTHREAD_COND_INITIALIZER; \
+    Xc_->refs = 1; \
+    Xc_; })
 
 #define ch_dup(chan) __extension__({ \
-    __extension__ __auto_type cX_ = chan; \
-    cX_->hdr.refs++; \
-    cX_; })
+    __extension__ __auto_type Xc_ = chan; \
+    Xc_->refs++; \
+    Xc_; })
 
 #define ch_close(chan) do { \
-    __extension__ __auto_type cX_ = chan; \
-    pthread_mutex_lock(&cX_->hdr.lock); \
-    assert(cX_->hdr.refs > 0); \
-    if (--cX_->hdr.refs == 0) { \
-        cX_->hdr.closed = true; \
-        pthread_cond_broadcast(&cX_->hdr.empty); \
-        pthread_cond_broadcast(&cX_->hdr.full); \
+    __extension__ __auto_type Xc_ = chan; \
+    pthread_mutex_lock(&Xc_->lock); \
+    assert(Xc_->refs > 0); \
+    if (--Xc_->refs == 0) { \
+        Xc_->closed = true; \
+        pthread_cond_broadcast(&Xc_->empty); \
+        pthread_cond_broadcast(&Xc_->full); \
     } \
-    pthread_mutex_unlock(&cX_->hdr.lock); } while (0)
+    pthread_mutex_unlock(&Xc_->lock); } while (0)
 
 #define ch_forceclose(chan) do { \
-    __extension__ __auto_type cX_ = chan; \
-    pthread_mutex_lock(&cX_->hdr.lock); \
-    assert(cX_->hdr.refs > 0); \
-    cX_->hdr.closed = true; \
-    pthread_cond_broadcast(&cX_->hdr.empty); \
-    pthread_cond_broadcast(&cX_->hdr.full); \
-    pthread_mutex_unlock(&cX_->hdr.lock); } while (0)
+    __extension__ __auto_type Xc_ = chan; \
+    pthread_mutex_lock(&Xc_->lock); \
+    assert(Xc_->refs > 0); \
+    Xc_->closed = true; \
+    pthread_cond_broadcast(&Xc_->empty); \
+    pthread_cond_broadcast(&Xc_->full); \
+    pthread_mutex_unlock(&Xc_->lock); } while (0)
 
 #define ch_drop(chan) __extension__({ \
-    __auto_type cX_ = chan; \
-    assert(pthread_mutex_destroy(&cX_->hdr.lock) == 0); \
-    assert(pthread_mutex_destroy(&cX_->hdr.wlock) == 0); \
-    assert(pthread_mutex_destroy(&cX_->hdr.rlock) == 0); \
-    assert(pthread_cond_destroy(&cX_->hdr.empty) == 0); \
-    assert(pthread_cond_destroy(&cX_->hdr.full) == 0); \
-    free(cX_); \
+    __auto_type Xc_ = chan; \
+    assert(pthread_mutex_destroy(&Xc_->lock) == 0 && \
+               pthread_mutex_destroy(&Xc_->wlock) == 0 && \
+               pthread_mutex_destroy(&Xc_->rlock) == 0 && \
+               pthread_cond_destroy(&Xc_->empty) == 0 && \
+               pthread_cond_destroy(&Xc_->full) == 0); \
+    free(Xc_); \
     NULL; })
 
 #define ch_send(chan, elt_) __extension__({ \
-    __auto_type cX_ = chan; \
-    int retX_ = CH_OK; \
-    pthread_mutex_lock(&cX_->hdr.wlock); \
-    pthread_mutex_lock(&cX_->hdr.lock); \
-    if (cX_->hdr.cap > 0) { \
-        while (cX_->buf.write - cX_->buf.read == cX_->buf.cap) { \
-            pthread_cond_wait(&cX_->buf.full, &cX_->buf.lock); \
-        } \
-        if (cX_->buf.closed) { \
-            retX_ = CH_CLOSED; \
-        } else { \
-            cX_->buf.buf[cX_->buf.write++ & (cX_->buf.cap - 1)] = elt_; \
-            pthread_cond_signal(&cX_->buf.empty); \
-        } \
-    } else { \
-        if (cX_->unbuf.closed) { \
-            retX_ = CH_CLOSED; \
-        } else { \
-            cX_->unbuf.elt = elt_; \
-            cX_->unbuf.write = 1; \
-            pthread_cond_signal(&cX_->unbuf.empty); \
-            pthread_cond_wait(&cX_->unbuf.full, &cX_->unbuf.lock); \
-            cX_->unbuf.read = 0; \
-        } \
+    __auto_type Xc_ = chan; \
+    int Xret_ = CH_OK; \
+    pthread_mutex_lock(&Xc_->wlock); \
+    pthread_mutex_lock(&Xc_->lock); \
+    if (Xc_->closed) { \
+        Xret_ = CH_CLOSED; \
+        goto MC_(cleanup, __LINE__); \
     } \
-    pthread_mutex_unlock(&cX_->hdr.lock); \
-    pthread_mutex_unlock(&cX_->hdr.wlock); \
-    retX_; })
+    if (Xc_->cap > 0) { \
+        while (Xc_->write - Xc_->read == Xc_->cap) { \
+            pthread_cond_wait(&Xc_->full, &Xc_->lock); \
+        } \
+        Xc_->buf[Xc_->write++ & (Xc_->cap - 1)] = elt_; \
+        pthread_cond_signal(&Xc_->empty); \
+    } else { \
+        *Xc_->buf = elt_; \
+        Xc_->write = 1; \
+        pthread_cond_signal(&Xc_->empty); \
+        pthread_cond_wait(&Xc_->full, &Xc_->lock); \
+        Xc_->read = 0; \
+    } \
+MC_(cleanup, __LINE__): \
+    pthread_mutex_unlock(&Xc_->lock); \
+    pthread_mutex_unlock(&Xc_->wlock); \
+    Xret_; })
 
 #define ch_trysend(chan, elt_) __extension__({ \
-    __auto_type cX_ = chan; \
-    int retX_ = CH_OK; \
-    if (cX_->hdr.cap > 0) { \
-        pthread_mutex_lock(&cX_->buf.lock); \
-        if (cX_->buf.closed) { \
-            retX_ = CH_CLOSED; \
-        } else if (cX_->buf.write - cX_->buf.read == cX_->buf.cap) { \
-            retX_ = CH_FULL; \
+    __auto_type Xc_ = chan; \
+    int Xret_ = CH_OK; \
+    if (Xc_->cap > 0) { \
+        pthread_mutex_lock(&Xc_->lock); \
+        if (Xc_->closed) { \
+            Xret_ = CH_CLOSED; \
+        } else if (Xc_->write - Xc_->read == Xc_->cap) { \
+            Xret_ = CH_FULL; \
         } else { \
-            cX_->buf.buf[cX_->buf.write++ & (cX_->buf.cap - 1)] = elt_; \
-            pthread_cond_signal(&cX_->buf.empty); \
+            Xc_->buf[Xc_->write++ & (Xc_->cap - 1)] = elt_; \
+            pthread_cond_signal(&Xc_->empty); \
         } \
-        pthread_mutex_unlock(&cX_->buf.lock); \
+        pthread_mutex_unlock(&Xc_->lock); \
     } else { \
-        if (pthread_mutex_trylock(&cX_->unbuf.wlock) == EBUSY) { \
-            retX_ = CH_BUSY; \
+        if (pthread_mutex_trylock(&Xc_->wlock) == EBUSY) { \
+            Xret_ = CH_BUSY; \
         } else { \
-            pthread_mutex_lock(&cX_->unbuf.lock); \
-            if (cX_->unbuf.closed) { \
-                retX_ = CH_CLOSED; \
-            } else if (cX_->unbuf.read == 0) { \
-                retX_ = CH_WBLOCK; \
+            pthread_mutex_lock(&Xc_->lock); \
+            if (Xc_->closed) { \
+                Xret_ = CH_CLOSED; \
+            } else if (Xc_->read == 0) { \
+                Xret_ = CH_WBLOCK; \
             } else { \
-                cX_->unbuf.elt = elt_; \
-                cX_->unbuf.write = 1; \
-                pthread_cond_signal(&cX_->unbuf.empty); \
-                pthread_cond_wait(&cX_->unbuf.full, &cX_->unbuf.lock); \
-                cX_->unbuf.read = 0; \
+                *Xc_->buf = elt_; \
+                Xc_->write = 1; \
+                pthread_cond_signal(&Xc_->empty); \
+                pthread_cond_wait(&Xc_->full, &Xc_->lock); \
+                Xc_->read = 0; \
             } \
-            pthread_mutex_unlock(&cX_->unbuf.lock); \
-            pthread_mutex_unlock(&cX_->unbuf.wlock); \
+            pthread_mutex_unlock(&Xc_->lock); \
+            pthread_mutex_unlock(&Xc_->wlock); \
         } \
     } \
-    retX_; })
+    Xret_; })
 
 #define ch_forcesend(chan, elt_) __extension__({ \
-    __auto_type cX_ = chan; \
-    int retX_ = CH_OK; \
-    pthread_mutex_lock(&cX_->hdr.wlock); \
-    pthread_mutex_lock(&cX_->hdr.lock); \
-    assert(cX_->hdr.cap > 0); \
-    if (cX_->buf.closed) { \
-        retX_ = CH_CLOSED; \
+    __auto_type Xc_ = chan; \
+    int Xret_ = CH_OK; \
+    assert(Xc_->cap > 0); \
+    pthread_mutex_lock(&Xc_->wlock); \
+    pthread_mutex_lock(&Xc_->lock); \
+    if (Xc_->closed) { \
+        Xret_ = CH_CLOSED; \
     } else { \
-        cX_->buf.buf[cX_->buf.write++ & (cX_->buf.cap - 1)] = elt_; \
-        if (cX_->buf.write - cX_->buf.read > cX_->buf.cap) { \
-            retX_ = CH_FULL; \
-            cX_->buf.read++; \
+        Xc_->buf[Xc_->write++ & (Xc_->cap - 1)] = elt_; \
+        if (Xc_->write - Xc_->read > Xc_->cap) { \
+            Xret_ = CH_FULL; \
+            Xc_->read++; \
         } \
-        pthread_cond_signal(&cX_->buf.empty); \
+        pthread_cond_signal(&Xc_->empty); \
     } \
-    pthread_mutex_unlock(&cX_->hdr.lock); \
-    pthread_mutex_unlock(&cX_->hdr.wlock); \
-    retX_; })
+    pthread_mutex_unlock(&Xc_->lock); \
+    pthread_mutex_unlock(&Xc_->wlock); \
+    Xret_; })
 
 #define ch_recv(chan, elt_) __extension__({ \
-    __auto_type cX_ = chan; \
-    int retX_ = CH_OK; \
-    pthread_mutex_lock(&cX_->hdr.rlock); \
-    pthread_mutex_lock(&cX_->hdr.lock); \
-    if (cX_->hdr.cap > 0) { \
-        while (cX_->buf.read == cX_->buf.write) { \
-            if (cX_->buf.closed) { \
-                retX_ = CH_CLOSED; \
-                break; \
+    __auto_type Xc_ = chan; \
+    int Xret_ = CH_OK; \
+    pthread_mutex_lock(&Xc_->rlock); \
+    pthread_mutex_lock(&Xc_->lock); \
+    if (Xc_->cap > 0) { \
+        while (Xc_->read == Xc_->write) { \
+            if (Xc_->closed) { \
+                Xret_ = CH_CLOSED; \
+                goto MC_(cleanup, __LINE__); \
             } \
-            pthread_cond_wait(&cX_->buf.empty, &cX_->buf.lock); \
+            pthread_cond_wait(&Xc_->empty, &Xc_->lock); \
         } \
-        if (retX_ == CH_OK) { \
-            elt_ = cX_->buf.buf[cX_->buf.read++ & (cX_->buf.cap - 1)]; \
-            pthread_cond_signal(&cX_->buf.full); \
-        } \
+        elt_ = Xc_->buf[Xc_->read++ & (Xc_->cap - 1)]; \
+        pthread_cond_signal(&Xc_->full); \
     } else { \
-        cX_->unbuf.read = 1; \
-        while (cX_->unbuf.write == 0) { \
-            if (cX_->unbuf.closed) { \
-                retX_ = CH_CLOSED; \
-                break; \
+        Xc_->read = 1; \
+        while (Xc_->write == 0) { \
+            if (Xc_->closed) { \
+                Xret_ = CH_CLOSED; \
+                goto MC_(cleanup, __LINE__); \
             } \
-            pthread_cond_wait(&cX_->unbuf.empty, &cX_->unbuf.lock); \
+            pthread_cond_wait(&Xc_->empty, &Xc_->lock); \
         } \
-        if (retX_ == CH_OK) { \
-            elt_ = cX_->unbuf.elt; \
-            cX_->unbuf.write = 0; \
-            pthread_cond_signal(&cX_->unbuf.full); \
-        } \
+        elt_ = *Xc_->buf; \
+        Xc_->write = 0; \
+        pthread_cond_signal(&Xc_->full); \
     } \
-    pthread_mutex_unlock(&cX_->hdr.lock); \
-    pthread_mutex_unlock(&cX_->hdr.rlock); \
-    retX_; })
+MC_(cleanup, __LINE__): \
+    pthread_mutex_unlock(&Xc_->lock); \
+    pthread_mutex_unlock(&Xc_->rlock); \
+    Xret_; })
 
 #define ch_tryrecv(chan, elt_) __extension__({ \
-    __auto_type cX_ = chan; \
-    int retX_ = CH_OK; \
-    if (cX_->hdr.cap > 0) { \
-        pthread_mutex_lock(&cX_->buf.lock); \
-        if (cX_->buf.closed) { \
-            retX_ = CH_CLOSED; \
-        } else if (cX_->buf.read == cX_->buf.write) { \
-            retX_ = CH_EMPTY; \
+    __auto_type Xc_ = chan; \
+    int Xret_ = CH_OK; \
+    if (Xc_->cap > 0) { \
+        pthread_mutex_lock(&Xc_->lock); \
+        if (Xc_->closed) { \
+            Xret_ = CH_CLOSED; \
+        } else if (Xc_->read == Xc_->write) { \
+            Xret_ = CH_EMPTY; \
         } else { \
-            elt_ = cX_->buf.buf[cX_->buf.read++ & (cX_->buf.cap - 1)]; \
-            pthread_cond_signal(&cX_->buf.full); \
+            elt_ = Xc_->buf[Xc_->read++ & (Xc_->cap - 1)]; \
+            pthread_cond_signal(&Xc_->full); \
         } \
-        pthread_mutex_unlock(&cX_->buf.lock); \
+        pthread_mutex_unlock(&Xc_->lock); \
     } else { \
-        if (pthread_mutex_trylock(&cX_->unbuf.rlock) == EBUSY) { \
-            retX_ = CH_BUSY; \
+        if (pthread_mutex_trylock(&Xc_->rlock) == EBUSY) { \
+            Xret_ = CH_BUSY; \
         } else { \
-            pthread_mutex_lock(&cX_->unbuf.lock); \
-            if (cX_->unbuf.closed) { \
-                retX_ = CH_CLOSED; \
-            } else if (cX_->unbuf.write == 0) { \
-                retX_ = CH_WBLOCK; \
+            pthread_mutex_lock(&Xc_->lock); \
+            if (Xc_->closed) { \
+                Xret_ = CH_CLOSED; \
+            } else if (Xc_->write == 0) { \
+                Xret_ = CH_WBLOCK; \
             } else { \
-                elt_ = cX_->unbuf.elt; \
-                cX_->unbuf.write = 0; \
-                pthread_cond_signal(&cX_->unbuf.full); \
+                elt_ = *Xc_->buf; \
+                Xc_->write = 0; \
+                pthread_cond_signal(&Xc_->full); \
             } \
-            pthread_mutex_unlock(&cX_->unbuf.lock); \
-            pthread_mutex_unlock(&cX_->unbuf.rlock); \
+            pthread_mutex_unlock(&Xc_->lock); \
+            pthread_mutex_unlock(&Xc_->rlock); \
         } \
     } \
-    retX_; })
+    Xret_; })
 
 #define ch_select(num) { \
-    bool doneX_ = false; \
+    bool Xdone_ = false; \
     switch (rand() % num) { \
-    for ( ; ; doneX_ = true)
+    for ( ; ; Xdone_ = true)
 
 #define ch_case(id, op, ...) \
     case id: \
@@ -280,7 +251,7 @@
     } else (void)0
 
 #define ch_default(...) \
-    if (doneX_) { \
+    if (Xdone_) { \
         __VA_ARGS__; \
         break; \
     } else (void)0
