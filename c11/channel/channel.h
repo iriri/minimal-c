@@ -80,8 +80,8 @@ typedef struct channel {
 
 inline channel *
 channel_make(size_t eltsize, size_t cap) {
-    channel *c = calloc(1, offsetof(channel, buf) +
-                               ((cap > 0 ? cap : 1) * eltsize));
+    channel *c = calloc(
+        1, offsetof(channel, buf) + ((cap ? cap : 1) * eltsize));
     assert((cap & (cap - 1)) == 0 && c);
     c->cap = cap;
     c->lock = (pthread_mutex_t)PTHREAD_MUTEX_INITIALIZER;

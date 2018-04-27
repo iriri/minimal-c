@@ -33,8 +33,8 @@
 
 #define rbuf_make(T, cap_) __extension__({ \
     __auto_type Xcap_ = cap_; \
-    ringbuf(T) *Xr_ = \
-        calloc(1, offsetof(ringbuf(T), buf) + (Xcap_ * sizeof(T))); \
+    ringbuf(T) *Xr_ = calloc( \
+        1, offsetof(ringbuf(T), buf) + (Xcap_ * sizeof(T))); \
     assert(Xcap_  > 0 && (Xcap_ & (Xcap_ - 1)) == 0 && Xr_->buf); \
     Xr_->cap = Xcap_; \
     Xr_->lock = (pthread_rwlock_t)PTHREAD_RWLOCK_INITIALIZER; \

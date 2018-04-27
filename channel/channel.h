@@ -41,8 +41,8 @@
 
 #define ch_make(T, cap_) __extension__({ \
     __auto_type Xcap_ = cap_; \
-    channel(T) *Xc_ = calloc(1, offsetof(channel(T), buf) + \
-                                    ((Xcap_ ? Xcap_ : 1) * sizeof(T))); \
+    channel(T) *Xc_ = calloc( \
+        1, offsetof(channel(T), buf) + ((Xcap_ ? : 1) * sizeof(T))); \
     assert((Xcap_ & (Xcap_ - 1)) == 0 && Xc_); \
     Xc_->cap = Xcap_; \
     Xc_->lock = (pthread_mutex_t)PTHREAD_MUTEX_INITIALIZER; \
@@ -89,13 +89,14 @@
     NULL; })
 
 #define ch_send(chan, elt_) __extension__({ \
+    __label__ cleanup; \
     __auto_type Xc_ = chan; \
     int Xret_ = CH_OK; \
     pthread_mutex_lock(&Xc_->wlock); \
     pthread_mutex_lock(&Xc_->lock); \
     if (Xc_->closed) { \
         Xret_ = CH_CLOSED; \
-        goto MC_(cleanup, __LINE__); \
+        goto cleanup; \
     } \
     if (Xc_->cap > 0) { \
         while (Xc_->write - Xc_->read == Xc_->cap) { \
@@ -110,7 +111,7 @@
         pthread_cond_wait(&Xc_->full, &Xc_->lock); \
         Xc_->read = 0; \
     } \
-MC_(cleanup, __LINE__): \
+cleanup: \
     pthread_mutex_unlock(&Xc_->lock); \
     pthread_mutex_unlock(&Xc_->wlock); \
     Xret_; })
@@ -172,6 +173,7 @@ MC_(cleanup, __LINE__): \
     Xret_; })
 
 #define ch_recv(chan, elt_) __extension__({ \
+    __label__ cleanup; \
     __auto_type Xc_ = chan; \
     int Xret_ = CH_OK; \
     pthread_mutex_lock(&Xc_->rlock); \
@@ -180,7 +182,7 @@ MC_(cleanup, __LINE__): \
         while (Xc_->read == Xc_->write) { \
             if (Xc_->closed) { \
                 Xret_ = CH_CLOSED; \
-                goto MC_(cleanup, __LINE__); \
+                goto cleanup; \
             } \
             pthread_cond_wait(&Xc_->empty, &Xc_->lock); \
         } \
@@ -191,7 +193,7 @@ MC_(cleanup, __LINE__): \
         while (Xc_->write == 0) { \
             if (Xc_->closed) { \
                 Xret_ = CH_CLOSED; \
-                goto MC_(cleanup, __LINE__); \
+                goto cleanup; \
             } \
             pthread_cond_wait(&Xc_->empty, &Xc_->lock); \
         } \
@@ -199,7 +201,7 @@ MC_(cleanup, __LINE__): \
         Xc_->write = 0; \
         pthread_cond_signal(&Xc_->full); \
     } \
-MC_(cleanup, __LINE__): \
+cleanup: \
     pthread_mutex_unlock(&Xc_->lock); \
     pthread_mutex_unlock(&Xc_->rlock); \
     Xret_; })

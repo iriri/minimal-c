@@ -78,9 +78,7 @@ main() {
     s_remove(s3, int, 1);
     int s3ia2[] = {5, 5678, 8};
     verify_slice(s3, s3ia2, 3);
-    /* when removing the head the offset is simply incremented */
     s_remove(s3, int, 0);
-    assert(s3->offset == sizeof(int));
     int s3ia3[] = {5678, 8};
     verify_slice(s3, s3ia3, 2);
     /* when removing from the end the length is simply decremented */
@@ -122,7 +120,7 @@ main() {
      * or an array. s_concat is a also a C11 generic macro so it can take
      * either a slice or a slice * as its second argument making it easy to
      * compose with s_slice_of or any other slice macro */
-    s_concat(s6, s_slice_of(s6, int, 2, 4), int);
+    s_concat(s6, int, s_slice_of(s6, int, 2, 4));
     int s6ia2[] = {0, 2, 4, 6, 8, 10, 12, 14, 16, 18, 4, 6};
     verify_slice(s6, s6ia2, 12);
     /* s_find returns -1 if it doesn't find a matching element and s_remove
@@ -138,16 +136,16 @@ main() {
     verify_slice(s6, s6ia3, 11);
 
     slice *s7;
-    s_concat((s7 = s_make(int, 0, 1)), s6, int); /* contrived, obviously */
+    s_concat((s7 = s_make(int, 0, 1)), int, s6); /* contrived, obviously */
     verify_slice(s7, s6ia3, 11);
     int ia[] = {1, 3, 5};
     /* s_slice_of on an array is not concurrency-safe as all slice_of_arr calls
      * share a global base struct */
-    s_concat(s7, s_slice_of(ia, int, 1, 3), int);
+    s_concat(s7, int, s_slice_of(ia, int, 1, 3));
     int s7ia[] = {0, 2, 4, 6, 8, 10, 12, 16, 18, 4, 6, 3, 5};
     verify_slice(s7, s7ia, 13);
     slice *s8;
-    s_concat(s7, (s8 = s_slice(s7, int, 4, 8)), int); /* again, contrived */
+    s_concat(s7, int, (s8 = s_slice(s7, int, 4, 8))); /* again, contrived */
     int s7ia2[] = {0, 2, 4, 6, 8, 10, 12, 16, 18, 4, 6, 3, 5, 8, 10, 12, 16};
     verify_slice(s7, s7ia2, 17);
     /* s_slice_of can also be used to create non-anonymous stack allocated (or

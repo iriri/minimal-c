@@ -78,9 +78,7 @@ main() {
     s_remove(s3, 1);
     int s3ia2[] = {5, 5678, 8};
     verify_slice(s3, s3ia2, 3);
-    /* when removing the head the offset is simply incremented */
     s_remove(s3, 0);
-    assert(s3->offset == 1);
     int s3ia3[] = {5678, 8};
     verify_slice(s3, s3ia3, 2);
     /* when removing from the end the length is simply decremented */

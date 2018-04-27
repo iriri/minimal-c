@@ -86,12 +86,16 @@
     s_append_(sAP_, eAP_); } while (0)
 
 #define s_concat_(slice1, slice2) do { \
-    while (slice1->len + slice1->offset + slice2.len > slice1->base->cap) { \
-        s_grow_(slice1->base, 2 * slice1->base->cap); \
+    size_t s1capC__ = slice1->base->cap, s2capC__ = slice2.base->cap; \
+    if (slice1->len + slice2.len > s1capC__ - slice1->offset) { \
+        s_grow_( \
+            slice1->base, \
+            s1capC__ + (s1capC__ > s2capC__ ? s1capC__ : s2capC__)); \
     } \
-    memmove(s_arr_(slice1) + slice1->len, \
-            slice2.base->arr + slice2.offset, \
-            slice2.len * sizeof(*slice1->base->arr)); \
+    memmove( \
+        s_arr_(slice1) + slice1->len, \
+        s_arr(&slice2), \
+        slice2.len * sizeof(*slice1->base->arr)); \
     slice1->len += slice2.len; } while (0)
 #define s_concat(slice1, slice2) do { \
     __extension__ __auto_type s1C_ = slice1; \
@@ -152,16 +156,13 @@
     bool s_removedR_ = (index) >= 0; \
     if (s_removedR_) { \
         slice->len--; \
-        if (index == 0) { \
-            slice->offset++; \
-        } else { \
-            size_t iR__ = index; \
-            assert(iR__ <= slice->len); \
-            if (iR__ != slice->len) { \
-                memmove(s_arr_(slice) + iR__, \
-                        s_arr_(slice) + iR__ + 1, \
-                        (slice->len - iR__) * sizeof(*slice->base->arr)); \
-            } \
+        size_t iR__ = index; \
+        assert(iR__ <= slice->len); \
+        if (iR__ != slice->len) { \
+            memmove( \
+                s_arr_(slice) + iR__, \
+                s_arr_(slice) + iR__ + 1, \
+                (slice->len - iR__) * sizeof(*slice->base->arr)); \
         } \
     } \
     s_removedR_; })
