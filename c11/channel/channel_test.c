@@ -57,9 +57,10 @@ main() {
     channel *dup = ch_dup(chan);
     ch_close(dup);
     channel *dup1 = ch_dup(dup);
-    ch_close(dup);
-    ch_forceclose(chan); /* ch_forceclose ignores the reference count */
+    ch_close(chan);
+    assert(!chan->closed);
     ch_close(dup1);
+    assert(chan->closed);
     /* This library aims to better support closing channels from the receiver
      * side so sends can fail gracefully with CH_CLOSED */
     i = 1;
@@ -145,6 +146,12 @@ main() {
         assert(pthread_join(pool[i], NULL) == 0);
         chanpool[i] = ch_drop(chanpool[i]);
     }
+    printf("dear POSIX committee please add pthread_mutex_setclock\n");
+    ch_timedrecv(chanp, channel *, 123, chan);
+    printf("so timed sends and receives can use CLOCK_MONOTIME\n");
+    ch_timedrecv(chanp, channel *, 2468, chan);
+    printf("and don't make it optional so Apple actually implements it\n");
+
     chanp = ch_drop(chanp);
 
     printf("All tests passed\n");
