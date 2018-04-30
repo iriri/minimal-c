@@ -8,7 +8,7 @@
 
 typedef struct slice_base_arr {
     char *arr;
-    size_t cap, refs;
+    size_t cap, refc;
 } slice_base;
 
 typedef struct slice_hdr {
@@ -78,7 +78,7 @@ slice_make(size_t eltsize, size_t len, size_t cap) {
 
 inline void *
 slice_drop(slice *hdr) {
-    if (--hdr->base->refs == 0) {
+    if (--hdr->base->refc == 0) {
         free(hdr->base->arr);
         free(hdr->base);
     }
@@ -93,7 +93,7 @@ slice_arr(slice *hdr) {
 
 inline slice *
 slice_slice(slice *hdr, size_t eltsize, size_t head, size_t tail) {
-    hdr->base->refs++;
+    hdr->base->refc++;
     slice *s = malloc(sizeof(*s));
     assert(head < tail && tail <= hdr->len && s);
     *s = (slice){hdr->base, hdr->offset + (head * eltsize), tail - head};
@@ -134,8 +134,7 @@ slice_index_safe(slice *hdr, size_t eltsize, size_t index) {
 
 inline void
 slice_grow(slice_base *base, size_t eltsize, size_t cap) {
-    base->arr = realloc(base->arr, (base->cap = cap) * eltsize);
-    assert(base->arr);
+    assert((base->arr = realloc(base->arr, (base->cap = cap) * eltsize)));
 }
 
 inline void *

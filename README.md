@@ -8,17 +8,22 @@ have been tested so far.
 
 ## channel.h
 Go-style channels with some minor changes to make the multi-producer use case
-more pleasant. `ch_select` is kind of terrible right now but nonblocking sends
-and receives can be done by just using `ch_trysend` and `ch_tryrecv` outside of
-`ch_select`. `ch_timedsend` and `ch_timedrecv` are available as well, although
-the correctness of their behavior is dependent on the quality of the target
-platform's pthreads implementation. (As `ch_select` is just a thinly veiled
-Duff's Device you'll need to compile with `-Wno-implicit-fallthrough` to avoid
-warnings from GCC.) The C99 and GNU99 variations are almost identical but the
-former is much more readable as it uses standard functions while the latter
-consists entirely of preprocessor macros. Thus the C99 version, which also
-includes light documentation in the form of comments, should be used as a
-reference even if using the GNU99 version.
+more pleasant. There are currently two very experimental (i.e. incomplete and
+completely broken) implementations of channel multiplexing, both of which are
+less powerful than Go's `select`: `ch_poll` is essentially a glorified Duff's
+Device (so you'll have to compile with `-Wno-implicit-fallthrough` to avoid
+warnings from GCC), while `ch_select` aims to better support extended waits via
+condition variables but channels can only be part of one `ch_select` at at
+time. Nonblocking sends and receives are available via `ch_trysend` and
+`ch_tryrecv` and timed sends and receives are available via `ch_timedsend` and
+`ch_timedrecv`. However, the correctness of the behavior of the latter pair is
+dependent on the quality of the target platform's pthreads implementation. The
+C99 and GNU99 variants are almost identical but the former is much more
+readable as it uses standard functions while the latter consists entirely of
+preprocessor macros. Thus the C99 version, which also includes light
+documentation in the form of comments, should be used as a reference even if
+using the GNU99 version. (`ch_select` is currently not availble in the GNU99
+variant.)
 
 ## slice.h
 A sliceable vector type. Not safe for concurrent use. Somewhat tested. See

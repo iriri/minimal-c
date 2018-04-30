@@ -377,9 +377,9 @@ cleanup2: \
     _Pragma ("GCC error \"pthread_mutex_timedlock is not implemented \"")
 #endif
 
-#define ch_select(num) { \
+#define ch_poll(casec) { \
     bool Xdone_ = false; \
-    switch (rand() % num) { \
+    switch (rand() % casec) { \
     for ( ; ; Xdone_ = true)
 
 #define ch_case(id, op, ...) \
@@ -395,7 +395,7 @@ cleanup2: \
         break; \
     } else (void)0
 
-#define ch_select_end } }
+#define ch_poll_end } }
 
 static inline struct timespec
 channel_add_offset_(long offset) {

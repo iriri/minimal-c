@@ -116,7 +116,7 @@ main() {
     int ir;
     for (int i = 1; i <= 100; i++) {
         /* kill me now */
-        ch_select(THREADC) {
+        ch_poll(THREADC) {
             ch_case(0, ch_tryrecv(chanpool[0], int, ir), assert(ir == 0));
             ch_case(1, ch_tryrecv(chanpool[1], int, ir), { /* also works */
                     printf("1, %d\n", ir);
@@ -139,7 +139,7 @@ main() {
             ch_default({
                 printf("default\n");
             });
-        } ch_select_end
+        } ch_poll_end
     }
     for (int i = 0; i < THREADC; i++) {
         ch_close(chanpool[i]);
