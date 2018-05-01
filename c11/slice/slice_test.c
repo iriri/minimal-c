@@ -43,9 +43,9 @@ main() {
     /* new slice from 0 to s->len with the same base array as s*/
     slice *s1 = s_slice(s, int, 0, s->len);
     assert(!memcmp(s, s1, sizeof(*s))); /* which should be identical to s */
-    assert(s1->base->refs == 2); /* should now be 2 refs to the same base */
+    assert(s1->base->refc == 2); /* should now be 2 refc to the same base */
     slice *s2 = s_slice(s, int, 3, 4); /* another new slice and another ref */
-    assert(s2->base->refs == 3 && s2->base == s1->base && s2->base == s->base);
+    assert(s2->base->refc == 3 && s2->base == s1->base && s2->base == s->base);
     int s2ia[] = {4};
     verify_slice(s2, s2ia, 1);
     s_append(s2, int, 5);
@@ -58,10 +58,10 @@ main() {
     int s2ia1[] = {4, 5, 6, 7, 8, 9};
     verify_slice(s2, s2ia1, 6);
     s = s_drop(s); /* should just decrease the ref count of the shared base */
-    assert(s1->base->refs == 2);
+    assert(s1->base->refc == 2);
 
     slice *s3 = s_slice_from(s2, int, 1, 4); /* slice with new base array */
-    assert(s3->base->refs == 1 && s1->base->refs == 2 && s3->base != s1->base);
+    assert(s3->base->refc == 1 && s1->base->refc == 2 && s3->base != s1->base);
     assert(s3->base->cap == 6);
     int s3ia[] = {5, 6, 7};
     verify_slice(s3, s3ia, 3);

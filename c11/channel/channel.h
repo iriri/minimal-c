@@ -813,8 +813,7 @@ channel_select_recv(channel *c, size_t eltsize, void *elt) {
     }
 
     if (c->cap > 0) {
-        memcpy(
-            elt, c->buf + ((c->read++ & (c->cap - 1)) * eltsize), eltsize);
+        memcpy(elt, c->buf + ((c->read++ & (c->cap - 1)) * eltsize), eltsize);
     } else {
         memcpy(elt, c->buf, eltsize);
         c->write = c->read = 0;

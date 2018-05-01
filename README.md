@@ -1,13 +1,16 @@
 # minimal
-Bad single header libraries. The headers found in the top level all (ab)use GNU
-extensions and should compile without warnings with `-Wall -Wextra -Wpedantic
--std=gnu99`, except when noted. The headers found in the `c11` directory should
-all compile without warnings with `-Wall -Wextra -Wpedantic` and either
-`-std=c99` or `-std=c11` depending on the features used. Only GCC and Clang
-have been tested so far.
+This is currently a dumping ground for (bad) ideas and will eventually be
+cleaned up, maybe.
 
-## channel.h
-Go-style channels with some minor changes to make the multi-producer use case
+~Bad single header libraries. The headers found in the top level all (ab)use
+GNU extensions and should compile without warnings with `-Wall -Wextra
+-Wpedantic -std=gnu99`, except when noted. The headers found in the `c11`
+directory should all compile without warnings with `-Wall -Wextra -Wpedantic`
+and either `-std=c99` or `-std=c11` depending on the features used. Only GCC
+and Clang have been tested so far.~
+
+## ~channel.h~
+~Go-style channels with some minor changes to make the multi-producer use case
 more pleasant. There are currently two very experimental (i.e. incomplete and
 completely broken) implementations of channel multiplexing, both of which are
 less powerful than Go's `select`: `ch_poll` is essentially a glorified Duff's
@@ -23,14 +26,14 @@ readable as it uses standard functions while the latter consists entirely of
 preprocessor macros. Thus the C99 version, which also includes light
 documentation in the form of comments, should be used as a reference even if
 using the GNU99 version. (`ch_select` is currently not availble in the GNU99
-variant.)
+variant.)~
 
-## slice.h
-A sliceable vector type. Not safe for concurrent use. Somewhat tested. See
-`slice_test.c` for information about usage.
+## ~slice.h~
+~A sliceable vector type. Not safe for concurrent use. Somewhat tested. See
+`slice_test.c` for information about usage.~
 
-## ringbuf.h
-A bounded concurrent MPMC queue in 99 lines. Not at all well tested. Not really
-designed to be used for synchronization but it's possible to spin on
+## ~ringbuf.h~
+~A bounded concurrent MPMC queue in 99 lines. Not at all well tested. Not
+really designed to be used for synchronization but it's possible to spin on
 `rbuf_trypush` and `rbuf_shift` if you really want to burn some cycles (e.g. to
-ensure determinism for testing). Don't use this.
+ensure determinism for testing). Don't use this.~

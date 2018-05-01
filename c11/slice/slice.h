@@ -5,6 +5,7 @@
 #include <assert.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 typedef struct slice_base_arr {
     char *arr;
@@ -60,8 +61,8 @@ typedef struct slice_hdr {
     extern inline void *slice_append(slice *, size_t); \
     extern inline void slice_concat_(slice *, size_t, slice); \
     extern inline void slice_concat(slice *, size_t, slice *); \
-    extern inline long long slice_find(slice *, size_t, void *); \
-    extern inline void slice_remove(slice *, size_t, long long); \
+    extern inline ssize_t slice_find(slice *, size_t, void *); \
+    extern inline void slice_remove(slice *, size_t, ssize_t); \
     \
     slice_base slice_tmp_base_
 
@@ -161,7 +162,7 @@ slice_concat(slice *s1, size_t eltsize, slice *s2) {
     slice_concat_(s1, eltsize, *s2);
 }
 
-inline long long
+inline ssize_t
 slice_find(slice *hdr, size_t eltsize, void *elt) {
     for (size_t i = 0; i < hdr->len; i++) {
         if (memcmp(slice_arr(hdr) + (i * eltsize), elt, eltsize) == 0) {
@@ -172,7 +173,7 @@ slice_find(slice *hdr, size_t eltsize, void *elt) {
 }
 
 inline void
-slice_remove(slice *hdr, size_t eltsize, long long index) {
+slice_remove(slice *hdr, size_t eltsize, ssize_t index) {
     if (index < 0) {
         return;
     }
