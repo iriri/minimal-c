@@ -139,7 +139,7 @@ main() {
             ch_default({
                 printf("default\n");
             });
-        } ch_poll_end
+        } ch_poll_end;
     }
     for (int i = 0; i < THREADC; i++) {
         ch_close(chanpool[i]);

@@ -81,7 +81,7 @@ vector_find(vector v, size_t eltsize, void *elt) {
     return -1;
 }
 
-void
+inline void
 vector_remove(vector *v, size_t eltsize, ssize_t index) {
     size_t i = index;
     if (index < 0) {

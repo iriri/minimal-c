@@ -71,14 +71,14 @@ typedef struct channel_select {
 #define ch_sel_finish(sel) channel_select_finish(sel)
 #define ch_sel_reg(sel, c, op) channel_select_reg(sel, c, op)
 #define ch_select(sel) channel_select_do(sel)
-#define ch_sel_send(c, type, elt) channel_select_send(c, sizeof(type), elt)
+#define ch_sel_send(c, type, elt) channel_select_send(c, sizeof(type), &elt)
 #define ch_sel_recv(c, type, elt) channel_select_recv(c, sizeof(type), &elt)
 
 /* Polling alternative to ch_select. Loops over the cases (op is intended to be
  * either trysend or tryrecv) rather than using a condition variable which can
  * burn a lot of cycles if there is no default case and none of the channels
  * are readable or writeable */
-#define ch_poll(casec) { \
+#define ch_poll(casec) if (1) { \
     bool Xdone_ = false; \
     switch (rand() % casec) { \
     for ( ; ; Xdone_ = true)
@@ -96,7 +96,7 @@ typedef struct channel_select {
         break; \
     } else (void)0
 
-#define ch_poll_end } }
+#define ch_poll_end } } else (void)0
 
 /* These declarations must be present in exactly one compilation unit */
 #define CHANNEL_EXTERN_DECL \
@@ -193,7 +193,7 @@ channel_drop(channel *c) {
 
 inline bool
 channel_signal_select_(channel *c, uint8_t op) {
-    if (!c->sel || !(c->selop & op)) {
+    if (!c->sel || c->selop != op) {
         return false;
     }
 
@@ -513,13 +513,17 @@ channel_recv_unbuf_(channel *c, size_t eltsize, void *elt) {
             return CH_CLOSED;
         }
         pthread_cond_wait(&c->empty, &c->lock);
+    // printf("wait0\n");
     }
+    // printf("wait1\n");
 
     memcpy(elt, c->buf, eltsize);
     c->write = c->read = 0;
     if (!channel_signal_select_(c, CH_OP_SEND)) {
         pthread_cond_signal(&c->full);
+    // printf("wait2\n");
     }
+    // printf("wait3\n");
     pthread_mutex_unlock(&c->lock);
     pthread_mutex_unlock(&c->rlock);
     return CH_OK;
@@ -737,7 +741,7 @@ channel_select_valid_(channel *c, uint8_t op) {
     if (c->closed) {
         return false;
     }
-    if ((op & CH_OP_SEND) &&
+    if (op == CH_OP_SEND &&
             ((c->cap == 0 && c->read == 1) ||
                 (c->cap > 0 && c->write - c->read < c->cap))) {
         return true;
@@ -751,24 +755,26 @@ channel_select_valid_(channel *c, uint8_t op) {
 /* TODO: Acquire rlock if channel is unbuffered */
 inline uint16_t
 channel_select_do(channel_select *sel) {
+    uint16_t offset = rand() % sel->len;
     pthread_mutex_lock(&sel->lock);
     for (uint16_t i = 0; i < sel->len; i++) {
-        channel *c = sel->arr[i].c;
-        if (pthread_mutex_trylock(&c->lock) == EBUSY) {
+        struct channel_select_elt_ e = sel->arr[(i + offset) % sel->len];
+        if (pthread_mutex_trylock(&e.c->lock) == EBUSY) {
             continue;
         }
-        if (!c->selwait && channel_select_valid_(c, sel->arr[i].op)) {
-            return i;
+        if (!e.c->selwait && channel_select_valid_(e.c, e.op)) {
+            return (i + offset) % sel->len;
         }
-        pthread_mutex_unlock(&c->lock);
+        pthread_mutex_unlock(&e.c->lock);
     }
+
     sel->state = CH_SEL_READY;
     do {
         pthread_cond_signal(&sel->init);
         pthread_cond_wait(&sel->ready, &sel->lock);
         if (sel->state == CH_SEL_EXC) {
-            channel *c = sel->arr[sel->id].c;
-            if (c->selwait && channel_select_valid_(c, sel->arr[sel->id].op)) {
+            struct channel_select_elt_ e = sel->arr[sel->id];
+            if (e.c->selwait && channel_select_valid_(e.c, e.op)) {
                 return sel->id;
             }
             assert(false);
@@ -778,21 +784,39 @@ channel_select_do(channel_select *sel) {
     assert(false);
 }
 
-/* Not yet implemented */
+/* Does this even work??? */
 inline void
 channel_select_send(channel *c, size_t eltsize, void *elt) {
-    assert(false);
+    if (!c->selwait) {
+        if (c->cap > 0) {
+            memcpy(
+                c->buf + ((c->write++ & (c->cap - 1)) * eltsize),
+                elt,
+                eltsize);
+            pthread_cond_signal(&c->empty);
+        } else {
+            memcpy(c->buf, elt, eltsize);
+            c->write = 1;
+            /* printf("signal\n"); */
+            pthread_cond_signal(&c->empty);
+            pthread_cond_wait(&c->full, &c->lock);
+        }
+        pthread_mutex_unlock(&c->lock);
+        goto cleanup;
+    }
+
     if (c->cap > 0) {
         memcpy(c->buf + ((c->write++ & (c->cap - 1)) * eltsize), elt, eltsize);
-        pthread_cond_signal(&c->empty);
     } else {
         memcpy(c->buf, elt, eltsize);
         c->write = 1;
         pthread_cond_signal(&c->empty);
-        while (c->write == 1) {
-            pthread_cond_wait(&c->full, &c->lock);
-        }
     }
+    c->sel->state = CH_SEL_INIT;
+    pthread_cond_signal(&c->sel->exc);
+cleanup:
+    pthread_mutex_unlock(&c->sel->lock);
+    return;
 }
 
 /* TODO: Release rlock if channel is unbuffered */
