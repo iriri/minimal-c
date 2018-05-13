@@ -1,12 +1,12 @@
 #include <assert.h>
-#include <stdio.h>
 #include <pthread.h>
+#include <stdio.h>
 #include "channel.h"
-
-CHANNEL_EXTERN_DECL;
 
 #define THREADC 16
 #define LIM 100000ll
+
+CHANNEL_EXTERN_DECL;
 
 void *
 sender(void *arg) {
@@ -32,7 +32,7 @@ receiver(void *arg) {
 
 int
 main() {
-    channel *chan = ch_make(int, 1);
+    channel *chan = ch_make(int, 16);
     pthread_t senders[THREADC];
     pthread_t recvers[THREADC];
     for (int i = 0; i < THREADC; i++) {

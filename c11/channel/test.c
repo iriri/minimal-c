@@ -1,3 +1,4 @@
+#include <assert.h>
 #include <stdio.h>
 #include <pthread.h>
 #include "channel.h"
@@ -67,7 +68,7 @@ main() {
     assert(ch_send(chan, int, i) == CH_CLOSED);
     ch_drop(chan);
 
-    chan = ch_make(int, 0);
+    chan = ch_make(int, 1);
     pthread_t pool[THREADC];
     for (int i = 0; i < THREADC; i++) {
         assert(pthread_create(pool + i, NULL, adder, chan) == 0);
@@ -146,11 +147,13 @@ main() {
         assert(pthread_join(pool[i], NULL) == 0);
         chanpool[i] = ch_drop(chanpool[i]);
     }
+    /*
     printf("dear POSIX committee please add pthread_mutex_setclock\n");
     ch_timedrecv(chanp, channel *, 123, chan);
     printf("so timed sends and receives can use CLOCK_MONOTIME\n");
     ch_timedrecv(chanp, channel *, 2468, chan);
     printf("and don't make it optional so Apple actually implements it\n");
+    */
 
     chanp = ch_drop(chanp);
 
