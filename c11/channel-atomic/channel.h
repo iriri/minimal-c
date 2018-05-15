@@ -21,21 +21,24 @@
 #elif defined __APPLE__
 #include <dispatch/dispatch.h>
 #else
-#error "insert semaphore implementation here"
+#error "<insert semaphore implementation here>"
 #endif
 
 #if ATOMIC_LLONG_LOCK_FREE != 2
-#error "not sure if this works if _Atomic uint64_t isn't lock-free"
+#error "Not sure if this works if _Atomic uint64_t isn't lock-free."
 #elif !defined(__BYTE_ORDER__) || (__BYTE_ORDER__ != __ORDER_LITTLE_ENDIAN__)
-#error "needs trivial changes for big endian but i don't have a box to test on"
+#error "The changes for big endian are trivial but I need a box to test on."
 #endif
 
 #define load_rlx_(obj) atomic_load_explicit(obj, memory_order_relaxed)
 #define load_acq_(obj) atomic_load_explicit(obj, memory_order_acquire)
+#define load_seq_cst_(obj) atomic_load_explicit(obj, memory_order_seq_cst)
 #define store_rlx_(obj, des) \
     atomic_store_explicit(obj, des, memory_order_relaxed)
 #define store_rel_(obj, des) \
     atomic_store_explicit(obj, des, memory_order_release)
+#define store_seq_cst_(obj, des) \
+    atomic_store_explicit(obj, des, memory_order_seq_cst)
 #define faa_acq_rel_(obj, arg) \
     atomic_fetch_add_explicit(obj, arg, memory_order_acq_rel)
 #define fas_acq_rel_(obj, arg) \
@@ -45,8 +48,8 @@
         obj, \
         exp, \
         des, \
-        memory_order_acq_rel, \
-        memory_order_acquire)
+        memory_order_seq_cst, \
+        memory_order_relaxed)
 
 #if _POSIX_SEMAPHORES < 200112L && defined __APPLE__
 #define sem_t dispatch_semaphore_t
@@ -98,9 +101,8 @@
  * may be preferable in cases where one of the operations is expected to
  * succeed or if there is a default case. Burns a lot of cycles otherwise. */
 #define ch_poll(casec) if (1) { \
-    bool Xdone_ = false; \
     switch (rand() % casec) { \
-    for ( ; ; Xdone_ = true)
+    for (bool Xdone_ = false; ; Xdone_ = true)
 
 #define ch_case(id, op, ...) \
     case id: \
@@ -117,19 +119,19 @@
 
 #define ch_poll_end } } else (void)0
 
-/* These declarations must be present in exactly one compilation unit */
+/* These declarations must be present in exactly one compilation unit. */
 #define CHANNEL_EXTERN_DECL \
     extern inline channel *channel_make(size_t, uint32_t); \
     extern inline channel *channel_dup(channel *); \
     extern inline channel *channel_drop(channel *); \
     extern inline channel_waiter_ *channel_waitq_add_( \
-        channel_waiter_ **, void *); \
+        channel_waiter_ *_Atomic *, void *); \
     extern inline bool channel_waitq_rm_( \
-        channel_waiter_ **, channel_waiter_ *); \
-    extern inline channel_waiter_ *channel_waitq_shift_(channel_waiter_ **); \
+        channel_waiter_ *_Atomic *, channel_waiter_ *); \
+    extern inline channel_waiter_ *channel_waitq_shift_( \
+        channel_waiter_ *_Atomic *); \
     extern inline void channel_waiter_drop_(channel_waiter_ *); \
     extern inline void channel_close(channel *); \
-    extern inline bool channel_signal_select_(channel *, uint8_t); \
     extern inline int channel_trysend_buf_(channel_buf_ *, size_t, void *); \
     extern inline int channel_trysend_unbuf_( \
         channel_unbuf_ *, size_t, void *); \
@@ -167,7 +169,7 @@ typedef struct channel_waiter_hdr_ {
     sem_t sem;
 } channel_waiter_hdr_;
 
-/* Buffered waiters currently only use the fields in the shared header */
+/* Buffered waiters currently only use the fields in the shared header. */
 typedef struct channel_waiter_hdr_ channel_waiter_buf_;
 
 typedef struct channel_waiter_unbuf_ {
@@ -186,14 +188,14 @@ typedef union channel_waiter_ {
 typedef struct channel_hdr_ {
     uint32_t cap;
     _Atomic uint32_t refc;
-    channel_waiter_ *sendq, *recvq;
+    channel_waiter_ *_Atomic sendq, *_Atomic recvq;
     pthread_mutex_t lock;
 } channel_hdr_;
 
 typedef struct channel_buf_ {
     uint32_t cap;
     _Atomic uint32_t refc;
-    channel_waiter_ *sendq, *recvq;
+    channel_waiter_ *_Atomic sendq, *_Atomic recvq;
     pthread_mutex_t lock;
     aun64_ write, read;
     char buf[];
@@ -242,7 +244,7 @@ channel_drop(channel *c) {
 }
 
 inline channel_waiter_ *
-channel_waitq_add_(channel_waiter_ **waitq, void *elt) {
+channel_waitq_add_(channel_waiter_ *_Atomic *waitq, void *elt) {
     channel_waiter_ *w;
     if (!elt) {
         assert((w = malloc(sizeof(w->buf))));
@@ -252,9 +254,9 @@ channel_waitq_add_(channel_waiter_ **waitq, void *elt) {
         w->unbuf.closed = false;
     }
     w->hdr.next = NULL;
-    channel_waiter_ *wq = *waitq;
+    channel_waiter_ *wq = load_acq_(waitq);
     if (!wq) {
-        *waitq = w;
+        store_seq_cst_(waitq, w);
         w->hdr.prev = w;
     } else {
         w->hdr.prev = wq->hdr.prev;
@@ -266,12 +268,12 @@ channel_waitq_add_(channel_waiter_ **waitq, void *elt) {
 }
 
 inline bool
-channel_waitq_rm_(channel_waiter_ **waitq, channel_waiter_ *w) {
+channel_waitq_rm_(channel_waiter_ *_Atomic *waitq, channel_waiter_ *w) {
     if (!w->hdr.prev) { // Already shifted off the front
         return false;
     }
     if (w->hdr.prev == w) { // `w` is the only element
-        *waitq = NULL;
+        store_seq_cst_(waitq, NULL);
         return true;
     }
 
@@ -281,19 +283,19 @@ channel_waitq_rm_(channel_waiter_ **waitq, channel_waiter_ *w) {
     if (w->hdr.next) {
         w->hdr.next->hdr.prev = w->hdr.prev;
     } else {
-        (*waitq)->hdr.prev = w->hdr.prev;
+        load_acq_(waitq)->hdr.prev = w->hdr.prev;
     }
     return true;
 }
 
 inline channel_waiter_ *
-channel_waitq_shift_(channel_waiter_ **waitq) {
-    channel_waiter_ *w = *waitq;
+channel_waitq_shift_(channel_waiter_ *_Atomic *waitq) {
+    channel_waiter_ *w = load_acq_(waitq);
     if (w) {
         if (w->hdr.next) {
             w->hdr.next->hdr.prev = w->hdr.prev;
         }
-        *waitq = w->hdr.next;
+        store_seq_cst_(waitq, w->hdr.next);
         w->hdr.prev = NULL; // For channel_waitq_rm_
     }
     return w;
@@ -319,21 +321,21 @@ channel_close(channel *c) {
 
     pthread_mutex_lock(&c->hdr.lock);
     if (c->hdr.cap > 0) {
-        while (c->buf.sendq) {
+        while (load_acq_(&c->buf.sendq)) {
             channel_waiter_ *w = channel_waitq_shift_(&c->buf.sendq);
             sem_post(&w->buf.sem);
         }
-        while (c->buf.recvq) {
+        while (load_acq_(&c->buf.recvq)) {
             channel_waiter_ *w = channel_waitq_shift_(&c->buf.recvq);
             sem_post(&w->buf.sem);
         }
     } else {
-        while (c->unbuf.sendq) {
+        while (load_acq_(&c->unbuf.sendq)) {
             channel_waiter_ *w = channel_waitq_shift_(&c->unbuf.sendq);
             w->unbuf.closed = true;
             sem_post(&w->unbuf.sem);
         }
-        while (c->unbuf.recvq) {
+        while (load_acq_(&c->unbuf.recvq)) {
             channel_waiter_ *w = channel_waitq_shift_(&c->unbuf.recvq);
             w->unbuf.closed = true;
             sem_post(&w->unbuf.sem);
@@ -364,8 +366,8 @@ channel_trysend_buf_(channel_buf_ *c, size_t eltsize, void *elt) {
                 write.u64 + 1 : (uint64_t)(write.u32.lap + 2) << 32;
         if (cas_weak_(&c->write.u64, &write.u64, write1)) {
             memcpy(box + sizeof(uint32_t), elt, eltsize);
-            store_rel_((_Atomic uint32_t *)box, lap + 1);
-            if (c->recvq) {
+            store_seq_cst_((_Atomic uint32_t *)box, lap + 1);
+            if (load_acq_(&c->recvq)) {
                 pthread_mutex_lock(&c->lock);
                 channel_waiter_ *w = channel_waitq_shift_(&c->recvq);
                 pthread_mutex_unlock(&c->lock);
@@ -384,7 +386,7 @@ channel_trysend_unbuf_(channel_unbuf_ *c, size_t eltsize, void *elt) {
     if (load_acq_(&c->refc) == 0) {
         return CH_CLOSED;
     }
-    if (!c->recvq) {
+    if (!load_acq_(&c->recvq)) {
         return CH_WBLOCK;
     }
 
@@ -434,8 +436,8 @@ channel_tryrecv_buf_(channel_buf_ *c, size_t eltsize, void *elt) {
                 read.u64 + 1 : (uint64_t)(read.u32.lap + 2) << 32;
         if (cas_weak_(&c->read.u64, &read.u64, read1)) {
             memcpy(elt, box + sizeof(uint32_t), eltsize);
-            store_rel_((_Atomic uint32_t *)box, lap + 1);
-            if (c->sendq) {
+            store_seq_cst_((_Atomic uint32_t *)box, lap + 1);
+            if (load_acq_(&c->sendq)) {
                 pthread_mutex_lock(&c->lock);
                 channel_waiter_ *w = channel_waitq_shift_(&c->sendq);
                 pthread_mutex_unlock(&c->lock);
@@ -454,7 +456,7 @@ channel_tryrecv_unbuf_(channel_unbuf_ *c, size_t eltsize, void *elt) {
     if (load_acq_(&c->refc) == 0) {
         return CH_CLOSED;
     }
-    if (!c->sendq) {
+    if (!load_acq_(&c->sendq)) {
         return CH_WBLOCK;
     }
 
@@ -643,7 +645,7 @@ channel_forcesend(channel *c_, size_t eltsize, void *elt) {
             uint64_t read1 = read.u32.index + 1 < c->cap ?
                     read.u64 + 1 : (uint64_t)(read.u32.lap + 2) << 32;
             if (cas_weak_(&c->read.u64, &read.u64, read1)) {
-                store_rel_((_Atomic uint32_t *)box1, lap1 + 1);
+                store_seq_cst_((_Atomic uint32_t *)box1, lap1 + 1);
             }
             continue;
         }
@@ -652,9 +654,9 @@ channel_forcesend(channel *c_, size_t eltsize, void *elt) {
                 write.u64 + 1 : (uint64_t)(write.u32.lap + 2) << 32;
         if (cas_weak_(&c->write.u64, &write.u64, write1)) {
             memcpy(box + sizeof(uint32_t), elt, eltsize);
-            store_rel_((_Atomic uint32_t *)box, lap + 1);
+            store_seq_cst_((_Atomic uint32_t *)box, lap + 1);
 
-            if (c->recvq) {
+            if (load_acq_(&c->recvq)) {
                 pthread_mutex_lock(&c->lock);
                 channel_waiter_ *w = channel_waitq_shift_(&c->recvq);
                 pthread_mutex_unlock(&c->lock);
