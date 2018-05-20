@@ -1,15 +1,15 @@
+#include <assert.h>
 #include <stdio.h>
 #include <pthread.h>
-#include "channel.h"
+#include "../channel.h"
+
+CHANNEL_EXTERN_DECL;
 
 #define THREADC 16
 
-CHANNEL_DEF(int);
-CHANNEL_DEF_PTR(channel(int));
-
 void *
 adder(void *arg) {
-    channel(int) *chan = (channel(int) *)arg;
+    channel *chan = (channel *)arg;
     int i;
     unsigned long long sum = 0;
     while (ch_recv(chan, i) != CH_CLOSED) {
@@ -23,8 +23,8 @@ adder(void *arg) {
 
 void *
 identity(void *arg) {
-    channel(PTR_OF(channel(int))) *chan = (channel(PTR_OF(channel(int))) *)arg;
-    channel(int) *chani;
+    channel *chan = (channel *)arg;
+    channel *chani;
     assert(ch_recv(chan, chani) == CH_OK);
     int id;
     assert(ch_recv(chani, id) == CH_OK);
@@ -35,14 +35,17 @@ identity(void *arg) {
 int
 main() {
     int i;
-    channel(int) *chan= ch_make(int, 2);
-    assert(ch_send(chan, 1) == CH_OK);
-    assert(ch_send(chan, 2) == CH_OK);
+    channel *chan= ch_make(int, 2);
+    i = 1;
+    assert(ch_send(chan, i) == CH_OK);
+    i = 2;
+    assert(ch_send(chan, i) == CH_OK);
     /* ch_trysend does not block but immediately returns with CH_FULL */
-    assert(ch_trysend(chan, 3) == CH_FULL);
-    /* ch_forcesend is also non-blocking but just overwrites the oldest value
+    i = 3;
+    assert(ch_trysend(chan, i) == CH_FULL);
+    /* ch_forcesend is also nonblocking but just overwrites the oldest value
      * instead. Does not work with unbuffered channels. */
-    assert(ch_forcesend(chan, 3) == CH_FULL);
+    assert(ch_forcesend(chan, i) == CH_FULL);
     assert(ch_tryrecv(chan, i) == CH_OK);
     assert(i == 2);
     assert(ch_recv(chan, i) == CH_OK);
@@ -52,19 +55,18 @@ main() {
     /* Added to make the multiple producer case less painful. Dup increments a
      * reference count and returns the same channel. ch_close decrements the
      * count and only actually closes the channel if the count is now 0. */
-    channel(int) *dup = ch_dup(chan);
+    channel *dup = ch_dup(chan);
     ch_close(dup);
-    channel(int) *dup1 = ch_dup(dup);
+    channel *dup1 = ch_dup(dup);
     ch_close(chan);
-    assert(!chan->closed);
     ch_close(dup1);
-    assert(chan->closed);
     /* This library aims to better support closing channels from the receiver
      * side so sends can fail gracefully with CH_CLOSED */
-    assert(ch_send(chan, 1) == CH_CLOSED);
+    i = 1;
+    assert(ch_send(chan, i) == CH_CLOSED);
     ch_drop(chan);
 
-    chan = ch_make(int, 0);
+    chan = ch_make(int, 1);
     pthread_t pool[THREADC];
     for (int i = 0; i < THREADC; i++) {
         assert(pthread_create(pool + i, NULL, adder, chan) == 0);
@@ -102,8 +104,8 @@ main() {
     assert(sum == ((100000ull * 100001ull)/2));
     ch_drop(chan);
 
-    channel(int) *chanpool[THREADC];
-    channel(PTR_OF(channel(int))) *chanp = ch_make(PTR_OF(channel(int)), 0);
+    channel *chanpool[THREADC];
+    channel *chanp = ch_make(channel *, 0);
     for (int i = 0; i < THREADC; i++) {
         chanpool[i] = ch_make(int, 0);
         assert(pthread_create(pool + i, NULL, identity, chanp) == 0);
@@ -136,21 +138,13 @@ main() {
             ch_default({
                 printf("default\n");
             });
-        } ch_poll_end
+        } ch_poll_end;
     }
     for (int i = 0; i < THREADC; i++) {
         ch_close(chanpool[i]);
         assert(pthread_join(pool[i], NULL) == 0);
         chanpool[i] = ch_drop(chanpool[i]);
     }
-#if _POSIX_TIMEOUTS >= 200112L
-    printf("dear POSIX committee please add pthread_mutex_setclock\n");
-    ch_timedrecv(chanp, 123, chan);
-    printf("so timed sends and receives can use CLOCK_MONOTIME\n");
-    ch_timedrecv(chanp, 2468, chan);
-    printf("and don't make it optional so Apple actually implements it\n");
-#endif
-
     chanp = ch_drop(chanp);
 
     printf("All tests passed\n");

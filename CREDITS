@@ -1,0 +1,5 @@
+channel.h
+    The semantics of this library were inspired by the Go programming language.
+
+    The implementations of sending, receiving, and selection were inspired by
+    algorithms described in "Go channels on steroids" by Dmitry Vyukov.

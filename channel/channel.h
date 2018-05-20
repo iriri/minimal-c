@@ -1,393 +1,1192 @@
-/* Copyright 2018 iriri. All rights reserved. Use of this source code is
- * governed by a BSD-style license which can be found in the LICENSE file. */
+/* channel.h v0.0.0
+ * Copyright 2018 iriri. All rights reserved. Use of this source code is
+ * governed by a BSD-style license which can be found in the LICENSE file.
+ *
+ * The semantics of this library were inspired by the Go programming language.
+ *
+ * The implementations of sending, receiving, and selection were inspired by
+ * algorithms described in "Go channels on steroids" by Dmitry Vyukov. */
 #ifndef CHANNEL_H
 #define CHANNEL_H
 #include <assert.h>
-#include <errno.h>
 #include <pthread.h>
+#include <stdatomic.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdlib.h>
-#include <time.h>
+#include <string.h>
 #include <unistd.h>
+#if _POSIX_SEMAPHORES >= 200112l
+#include <semaphore.h>
+#elif defined __APPLE__
+#include <dispatch/dispatch.h>
+#else
+#error "<insert semaphore implementation here>"
+#endif
 
+/* Assumptions */
+#if ATOMIC_LLONG_LOCK_FREE != 2
+#error "Not sure if this works if _Atomic uint64_t isn't lock-free."
+#elif !defined(__BYTE_ORDER__) || (__BYTE_ORDER__ != __ORDER_LITTLE_ENDIAN__)
+#error "The changes for big endian are trivial but I need a box to test on."
+#endif
+
+static_assert(
+    sizeof(uintptr_t) >= sizeof(int),
+    "The send_int functions assume sizeof(intptr_t) >= sizeof(int).");
+
+/* ------------------------------- Interface ------------------------------- */
+#define CHANNEL_H_VERSION 0l // 0.0.0
+
+/* Exported "functions"
+ *
+ * TODO Use GNU statement expressions (or thread local variables) to cast and
+ * assign from the result of res_cell/similar instead of using the & operator
+ * and memcpy, increasing type safety and also avoiding the need for C11
+ * generic selection making this library GNU99 (or C99) compatible.  */
+#define ch_make(type, cap) channel_make(sizeof(type), cap)
+#define ch_dup(c) channel_dup(c)
+#define ch_close(c) channel_close(c)
+#define ch_drop(c) channel_drop(c)
+
+/* Ints are special-cased via C11 generic slection to make it possible to send,
+ * e.g., opcodes without having to create a temporary variable. However, C's
+ * "generics" are truly horrible. The cast is required because all branches
+ * must be valid expressions even though only one is chosen at compile time. */
+#define ch_send(c, elt) (\
+    assert(sizeof(elt) == c->hdr.eltsize), \
+    _Generic(elt, \
+        int: channel_send_int(c, (int)(elt)), \
+        default: channel_send(c, &(elt))))
+#define ch_trysend(c, elt) (\
+    assert(sizeof(elt) == c->hdr.eltsize), \
+    _Generic(elt, \
+        int: channel_trysend_int(c, (int)(elt)), \
+        default: channel_trysend(c, &(elt))))
+#if 0
+#define ch_timedsend(c, elt) (\
+    assert(sizeof(elt) == c->hdr.eltsize), \
+    _Generic(elt, \
+        int: channel_timedsend_int(c, (int)(elt)), \
+        default: channel_timedsend(c, &(elt))))
+#endif
+#define ch_forcesend(c, elt) (\
+    assert(sizeof(elt) == c->hdr.eltsize), \
+    _Generic(elt, \
+        int: channel_forcesend_int(c, (int)(elt)), \
+        default: channel_forcesend(c, &(elt))))
+
+#define ch_recv(c, elt) \
+    (assert(sizeof(elt) == c->hdr.eltsize), channel_recv(c, &(elt)))
+#define ch_tryrecv(c, elt) \
+    (assert(sizeof(elt) == c->hdr.eltsize), channel_tryrecv(c, &(elt)))
+#define ch_timedrecv(c, elt) \
+    (assert(sizeof(elt) == c->hdr.eltsize), channel_timedrecv(c, &(elt)))
+
+#define ch_set_make(cap) channel_set_make(cap)
+#define ch_set_drop(s) channel_set_drop(s)
+#define ch_set_add(s, c, op, elt) channel_set_add(s, c, op, &(elt))
+#define ch_set_rereg(s, id, op, elt) channel_set_rereg(s, id, op, &(elt))
+#define ch_select(s) channel_select(s)
+
+/* Return codes */
 #define CH_OK 0x0
-#define CH_FULL 0x1
-#define CH_EMPTY 0x2
-#define CH_BUSY 0x4
-#define CH_WBLOCK 0x8
-#define CH_TIMEDOUT 0x10
-#define CH_CLOSED 0x20
+#define CH_CLOSED 0x1
+#define CH_FULL 0x2
+#define CH_EMPTY 0x4
+#define CH_TIMEDOUT 0x8
 
-#ifndef MINIMAL_
-#define MINIMAL_
-#define MACRO_CONCAT_(x, y) x##y
-#define MC_(x, y) MACRO_CONCAT_(x, y)
-#define PTR_OF(T) MC_(T, ptr)
+#define CH_SEL_CLOSED UINT32_MAX // Should be merged somehow with CH_CLOSED?
+
+/* Op codes */
+typedef enum channel_op {
+    CH_NOOP,
+    CH_SEND,
+    CH_RECV,
+} channel_op;
+
+/* These declarations must be present in exactly one compilation unit. */
+#define CHANNEL_EXTERN_DECL \
+    extern inline void channel_assert_( \
+        const char *, unsigned, const char *) __attribute__((noreturn)); \
+    extern inline channel *channel_make(size_t, uint32_t); \
+    extern inline channel *channel_dup(channel *); \
+    extern inline channel_waiter_ *channel_waitq_push_( \
+        channel_waiter_ *_Atomic *, \
+        sem_t *, \
+        _Atomic uint32_t *, \
+        uint32_t, \
+        void *); \
+    extern inline bool channel_waitq_remove( \
+        channel_waiter_ *_Atomic *, channel_waiter_ *); \
+    extern inline channel_waiter_ *channel_waitq_shift_( \
+        channel_waiter_ *_Atomic *); \
+    extern inline void channel_close(channel *); \
+    extern inline channel *channel_drop(channel *); \
+    extern inline int channel_buf_res_cell_( \
+        channel_buf_ *, char **, uint32_t *); \
+    extern inline void channel_buf_recvq_add_(channel_buf_ *); \
+    extern inline int channel_buf_trysend_(channel_buf_ *, void *); \
+    extern inline int channel_unbuf_trysend_try_( \
+        channel_unbuf_ *, channel_waiter_unbuf_ **); \
+    extern inline int channel_unbuf_trysend_(channel_unbuf_ *, void *); \
+    extern inline int channel_trysend(channel *, void *); \
+    extern inline int channel_buf_trysend_int_(channel_buf_ *, int); \
+    extern inline int channel_unbuf_trysend_int_(channel_unbuf_ *, int); \
+    extern inline int channel_trysend_int(channel *, int); \
+    extern inline int channel_buf_tryrecv_(channel_buf_ *, void *); \
+    extern inline int channel_unbuf_tryrecv_(channel_unbuf_ *, void *); \
+    extern inline int channel_tryrecv(channel *, void *); \
+    extern inline int channel_buf_forceres_cell_( \
+        channel_buf_ *, char **, uint32_t *); \
+    extern inline int channel_forcesend(channel *, void *); \
+    extern inline int channel_forcesend_int(channel *, int); \
+    extern inline int channel_buf_send_(channel_buf_ *, void *); \
+    extern inline int channel_unbuf_send_(channel_unbuf_ *, void *); \
+    extern inline int channel_send(channel *, void *); \
+    extern inline int channel_buf_send_int_(channel_buf_ *, int); \
+    extern inline int channel_unbuf_send_int_(channel_unbuf_ *, int); \
+    extern inline int channel_send_int(channel *, int); \
+    extern inline int channel_buf_recv_(channel_buf_ *, void *); \
+    extern inline int channel_unbuf_recv_(channel_unbuf_ *, void *); \
+    extern inline int channel_recv(channel *, void *); \
+    extern inline channel_set *channel_set_make(uint32_t); \
+    extern inline channel_set *channel_set_drop(channel_set *); \
+    extern inline uint32_t channel_set_add( \
+        channel_set *, channel *, channel_op, void *); \
+    extern inline void channel_set_rereg( \
+        channel_set *, uint32_t, channel_op, void *); \
+    extern inline bool channel_select_test_all_( \
+        channel_set *, uint32_t *, uint32_t); \
+    extern inline bool channel_select_ready_(channel *, channel_op); \
+    extern inline channel_select_rc_ channel_select_ready_or_wait_( \
+        channel_set *, _Atomic uint32_t *, uint32_t offset); \
+    extern inline void channel_select_remove_waiters_(channel_set *); \
+    extern inline uint32_t channel_select(channel_set *)
+
+/* ---------------------------- Implementation ---------------------------- */
+#define CH_SEL_MAGIC_ UINT32_MAX
+#define CH_SEL_NIL_ (UINT32_MAX - 1)
+
+typedef enum channel_select_rc_ {
+    CH_SEL_RC_READY_,
+    CH_SEL_RC_WAIT_,
+    CH_SEL_RC_CLOSED_,
+} channel_select_rc_;
+
+#if _POSIX_SEMAPHORES < 200112L && defined __APPLE__
+#define sem_t dispatch_semaphore_t
+#define sem_init(sem, pshared, val) *(sem) = dispatch_semaphore_create(val)
+#define sem_post(sem) dispatch_semaphore_signal(*(sem))
+#define sem_wait(sem) dispatch_semaphore_wait(*(sem), DISPATCH_TIME_FOREVER)
+#define sem_destroy(sem) dispatch_release(*(sem))
 #endif
 
-#define channel(T) MC_(channel_, T)
+/* If C had generics, the cell struct would be defined as follows:
+ * typedef struct channel_cell_<T> {
+ *     _Atomic uint32_t lap;
+ *     T elt;
+ * } channel_cell_<T>; */
+#define ch_cellsize_(eltsize) (sizeof(uint32_t) + eltsize)
+#define ch_cell_lap_(cell) ((_Atomic uint32_t *)cell)
+#define ch_cell_elt_(cell) (cell + sizeof(uint32_t))
 
-#define CHANNEL_DEF(T) \
-    typedef struct channel(T) { \
-        size_t cap, write, read; \
-        pthread_mutex_t lock, wlock, rlock; \
-        pthread_cond_t empty, full; \
-        uint16_t refs; \
-        bool closed; \
-        T buf[]; \
-    } channel(T)
-#define CHANNEL_DEF_PTR(T) \
-    typedef T *PTR_OF(T); \
-    CHANNEL_DEF(PTR_OF(T))
+typedef union channel_aun64_ {
+    _Atomic uint64_t u64;
+    struct {
+        _Atomic uint32_t index;
+        _Atomic uint32_t lap;
+    } u32;
+} channel_aun64_;
 
-#define ch_make(T, cap_) __extension__({ \
-    __auto_type Xcap_ = cap_; \
-    channel(T) *Xc_ = calloc( \
-        1, offsetof(channel(T), buf) + ((Xcap_ ? : 1) * sizeof(T))); \
-    assert((Xcap_ & (Xcap_ - 1)) == 0 && Xc_); \
-    Xc_->cap = Xcap_; \
-    Xc_->lock = (pthread_mutex_t)PTHREAD_MUTEX_INITIALIZER; \
-    Xc_->wlock = (pthread_mutex_t)PTHREAD_MUTEX_INITIALIZER; \
-    Xc_->rlock = (pthread_mutex_t)PTHREAD_MUTEX_INITIALIZER; \
-    Xc_->empty = (pthread_cond_t)PTHREAD_COND_INITIALIZER; \
-    Xc_->full = (pthread_cond_t)PTHREAD_COND_INITIALIZER; \
-    Xc_->refs = 1; \
-    Xc_; })
+typedef union channel_un64_ {
+    uint64_t u64;
+    struct {
+        uint32_t index;
+        uint32_t lap;
+    } u32;
+} channel_un64_;
 
-#define ch_dup(chan) __extension__({ \
-    __extension__ __auto_type Xc_ = chan; \
-    pthread_mutex_lock(&Xc_->lock); \
-    Xc_->refs++; \
-    pthread_mutex_unlock(&Xc_->lock); \
-    Xc_; })
+typedef struct channel_waiter_hdr_ {
+    union channel_waiter_ *prev, *next;
+    sem_t *sem;
+    _Atomic uint32_t *sel_state;
+    uint32_t sel_id;
+} channel_waiter_hdr_;
 
-#define ch_close(chan) do { \
-    __extension__ __auto_type Xc_ = chan; \
-    pthread_mutex_lock(&Xc_->lock); \
-    assert(Xc_->refs > 0); \
-    if (--Xc_->refs == 0) { \
-        Xc_->closed = true; \
-        pthread_cond_broadcast(&Xc_->empty); \
-        pthread_cond_broadcast(&Xc_->full); \
-    } \
-    pthread_mutex_unlock(&Xc_->lock); } while (0)
+/* Buffered waiters currently only use the fields in the shared header. */
+typedef struct channel_waiter_hdr_ channel_waiter_buf_;
 
-#define ch_drop(chan) __extension__({ \
-    __auto_type Xc_ = chan; \
-    assert(pthread_mutex_destroy(&Xc_->lock) == 0 && \
-               pthread_mutex_destroy(&Xc_->wlock) == 0 && \
-               pthread_mutex_destroy(&Xc_->rlock) == 0 && \
-               pthread_cond_destroy(&Xc_->empty) == 0 && \
-               pthread_cond_destroy(&Xc_->full) == 0); \
-    free(Xc_); \
-    NULL; })
+typedef struct channel_waiter_unbuf_ {
+    struct channel_waiter_unbuf_ *prev, *next;
+    sem_t *sem;
+    _Atomic uint32_t *sel_state;
+    uint32_t sel_id;
+    bool closed;
+    void *elt;
+} channel_waiter_unbuf_;
 
-#define ch_send(chan, elt_) __extension__({ \
-    __label__ cleanup; \
-    __auto_type Xc_ = chan; \
-    int Xret_ = CH_OK; \
-    pthread_mutex_lock(&Xc_->wlock); \
-    pthread_mutex_lock(&Xc_->lock); \
-    if (Xc_->cap > 0) { \
-        while (Xc_->write - Xc_->read == Xc_->cap) { \
-            if (Xc_->closed) { \
-                Xret_ = CH_CLOSED; \
-                goto cleanup; \
-            } \
-            pthread_cond_wait(&Xc_->full, &Xc_->lock); \
-        } \
-        if (Xc_->closed) { \
-            Xret_ = CH_CLOSED; \
-            goto cleanup; \
-        } \
-        Xc_->buf[Xc_->write++ & (Xc_->cap - 1)] = elt_; \
-        pthread_cond_signal(&Xc_->empty); \
-    } else { \
-        if (Xc_->closed) { \
-            Xret_ = CH_CLOSED; \
-            goto cleanup; \
-        } \
-        *Xc_->buf = elt_; \
-        Xc_->write = 1; \
-        pthread_cond_signal(&Xc_->empty); \
-        pthread_cond_wait(&Xc_->full, &Xc_->lock); \
-        Xc_->read = 0; \
-    } \
-cleanup: \
-    pthread_mutex_unlock(&Xc_->lock); \
-    pthread_mutex_unlock(&Xc_->wlock); \
-    Xret_; })
+typedef union channel_waiter_ {
+    channel_waiter_hdr_ hdr;
+    channel_waiter_buf_ buf;
+    channel_waiter_unbuf_ unbuf;
+} channel_waiter_;
 
-#define ch_trysend(chan, elt_) __extension__({ \
-    __label__ cleanup; \
-    __label__ cleanup1; \
-    __auto_type Xc_ = chan; \
-    int Xret_ = CH_OK; \
-    if (Xc_->cap > 0) { \
-        pthread_mutex_lock(&Xc_->wlock); \
-        pthread_mutex_lock(&Xc_->lock); \
-        if (Xc_->closed) { \
-            Xret_ = CH_CLOSED; \
-            goto cleanup; \
-        } \
-        if (Xc_->write - Xc_->read == Xc_->cap) { \
-            Xret_ = CH_FULL; \
-            goto cleanup; \
-        } \
-        Xc_->buf[Xc_->write++ & (Xc_->cap - 1)] = elt_; \
-        pthread_cond_signal(&Xc_->empty); \
-    } else { \
-        if (pthread_mutex_trylock(&Xc_->wlock) == EBUSY) { \
-            Xret_ = CH_BUSY; \
-            goto cleanup1; \
-        } \
-        pthread_mutex_lock(&Xc_->lock); \
-        if (Xc_->closed) { \
-            Xret_ = CH_CLOSED; \
-            goto cleanup; \
-        } \
-        if (Xc_->read == 0) { \
-            Xret_ = CH_WBLOCK; \
-            goto cleanup; \
-        } \
-        *Xc_->buf = elt_; \
-        Xc_->write = 1; \
-        pthread_cond_signal(&Xc_->empty); \
-        pthread_cond_wait(&Xc_->full, &Xc_->lock); \
-        Xc_->read = 0; \
-    } \
-cleanup: \
-    pthread_mutex_unlock(&Xc_->lock); \
-    pthread_mutex_unlock(&Xc_->wlock); \
-cleanup1: \
-    Xret_; })
+typedef struct channel_hdr_ {
+    uint32_t cap;
+    _Atomic uint32_t refc;
+    size_t eltsize;
+    channel_waiter_ *_Atomic sendq, *_Atomic recvq;
+    pthread_mutex_t lock;
+} channel_hdr_;
 
-#if _POSIX_TIMEOUTS >= 200112L
-#define ch_timedsend(chan, offset, elt_) __extension__({ \
-    __label__ cleanup; \
-    __label__ cleanup1; \
-    __label__ cleanup2; \
-    struct timespec Xts_ = channel_add_offset_(offset); \
-    __auto_type Xc_ = chan; \
-    int Xret_ = CH_OK; \
-    if (pthread_mutex_timedlock(&Xc_->wlock, &Xts_) == ETIMEDOUT) { \
-        Xret_ = CH_BUSY | CH_TIMEDOUT; \
-        goto cleanup2; \
-    } \
-    if (pthread_mutex_timedlock(&Xc_->lock, &Xts_) == ETIMEDOUT) { \
-        Xret_ = CH_BUSY | CH_TIMEDOUT; \
-        goto cleanup1; \
-    } \
-    if (Xc_->cap > 0) { \
-        while (Xc_->write - Xc_->read == Xc_->cap) { \
-            if (Xc_->closed) { \
-                Xret_ = CH_CLOSED; \
-                goto cleanup; \
-            } \
-            if (pthread_cond_timedwait(&Xc_->full, &Xc_->lock, &Xts_) == \
-                    ETIMEDOUT) { \
-                Xret_ = (Xc->closed ? CH_CLOSED : CH_FULL) | CH_TIMEDOUT; \
-                goto cleanup; \
-            } \
-        } \
-        if (Xc_->closed) { \
-            Xret_ = CH_CLOSED; \
-            goto cleanup; \
-        } \
-        Xc_->buf[Xc_->write++ & (Xc_->cap - 1)] = elt_; \
-        pthread_cond_signal(&Xc_->empty); \
-    } else { \
-        if (Xc_->closed) { \
-            Xret_ = CH_CLOSED; \
-            goto cleanup; \
-        } \
-        *Xc_->buf = elt_; \
-        Xc_->write = 1; \
-        pthread_cond_signal(&Xc_->empty); \
-        if (pthread_cond_timedwait(&Xc_->full, &Xc_->lock, &Xts_) == \
-                ETIMEDOUT) { \
-            Xret_ = (Xc->closed ? CH_CLOSED : CH_FULL) | CH_TIMEDOUT; \
-            Xc_->write = 0; \
-            goto cleanup; \
-        } \
-    } \
-cleanup: \
-    pthread_mutex_unlock(&Xc_->lock); \
-cleanup1: \
-    pthread_mutex_unlock(&Xc_->wlock); \
-cleanup2: \
-    Xret_; })
-#else
-#define ch_timedsend(chan, offset, elt_) \
-    _Pragma ("GCC error \"pthread_mutex_timedlock is not implemented \"")
-#endif
+typedef struct channel_buf_ {
+    uint32_t cap;
+    _Atomic uint32_t refc;
+    size_t eltsize;
+    channel_waiter_ *_Atomic sendq, *_Atomic recvq;
+    pthread_mutex_t lock;
+    channel_aun64_ write, read;
+    char buf[];
+} channel_buf_;
 
-#define ch_forcesend(chan, elt_) __extension__({ \
-    __auto_type Xc_ = chan; \
-    int Xret_ = CH_OK; \
-    assert(Xc_->cap > 0); \
-    pthread_mutex_lock(&Xc_->wlock); \
-    pthread_mutex_lock(&Xc_->lock); \
-    if (Xc_->closed) { \
-        Xret_ = CH_CLOSED; \
-    } else { \
-        Xc_->buf[Xc_->write++ & (Xc_->cap - 1)] = elt_; \
-        if (Xc_->write - Xc_->read > Xc_->cap) { \
-            Xret_ = CH_FULL; \
-            Xc_->read++; \
-        } \
-        pthread_cond_signal(&Xc_->empty); \
-    } \
-    pthread_mutex_unlock(&Xc_->lock); \
-    pthread_mutex_unlock(&Xc_->wlock); \
-    Xret_; })
+/* Unbuffered channels currently only use the fields in the shared header. */
+typedef struct channel_hdr_ channel_unbuf_;
 
-#define ch_recv(chan, elt_) __extension__({ \
-    __label__ cleanup; \
-    __auto_type Xc_ = chan; \
-    int Xret_ = CH_OK; \
-    pthread_mutex_lock(&Xc_->rlock); \
-    pthread_mutex_lock(&Xc_->lock); \
-    if (Xc_->cap > 0) { \
-        while (Xc_->read == Xc_->write) { \
-            if (Xc_->closed) { \
-                Xret_ = CH_CLOSED; \
-                goto cleanup; \
-            } \
-            pthread_cond_wait(&Xc_->empty, &Xc_->lock); \
-        } \
-        elt_ = Xc_->buf[Xc_->read++ & (Xc_->cap - 1)]; \
-        pthread_cond_signal(&Xc_->full); \
-    } else { \
-        Xc_->read = 1; \
-        while (Xc_->write == 0) { \
-            if (Xc_->closed) { \
-                Xret_ = CH_CLOSED; \
-                goto cleanup; \
-            } \
-            pthread_cond_wait(&Xc_->empty, &Xc_->lock); \
-        } \
-        elt_ = *Xc_->buf; \
-        Xc_->write = Xc_->read = 0; \
-        pthread_cond_signal(&Xc_->full); \
-    } \
-cleanup: \
-    pthread_mutex_unlock(&Xc_->lock); \
-    pthread_mutex_unlock(&Xc_->rlock); \
-    Xret_; })
+typedef union channel {
+    channel_hdr_ hdr;
+    channel_buf_ buf;
+    channel_unbuf_ unbuf;
+} channel;
 
-#define ch_tryrecv(chan, elt_) __extension__({ \
-    __label__ cleanup; \
-    __label__ cleanup1; \
-    __auto_type Xc_ = chan; \
-    int Xret_ = CH_OK; \
-    if (Xc_->cap > 0) { \
-        pthread_mutex_lock(&Xc_->rlock); \
-        pthread_mutex_lock(&Xc_->lock); \
-        if (Xc_->closed) { \
-            Xret_ = CH_CLOSED; \
-            goto cleanup; \
-        } \
-        if (Xc_->read == Xc_->write) { \
-            Xret_ = CH_EMPTY; \
-            goto cleanup; \
-        } \
-        elt_ = Xc_->buf[Xc_->read++ & (Xc_->cap - 1)]; \
-        pthread_cond_signal(&Xc_->full); \
-    } else { \
-        if (pthread_mutex_trylock(&Xc_->rlock) == EBUSY) { \
-            Xret_ = CH_BUSY; \
-            goto cleanup1; \
-        } \
-        pthread_mutex_lock(&Xc_->lock); \
-        if (Xc_->closed) { \
-            Xret_ = CH_CLOSED; \
-            goto cleanup; \
-        } \
-        if (Xc_->write == 0) { \
-            Xret_ = CH_WBLOCK; \
-            goto cleanup; \
-        } \
-        elt_ = *Xc_->buf; \
-        Xc_->write = 0; \
-        pthread_cond_signal(&Xc_->full); \
-    } \
-cleanup: \
-    pthread_mutex_unlock(&Xc_->lock); \
-    pthread_mutex_unlock(&Xc_->rlock); \
-cleanup1: \
-    Xret_; })
+typedef struct channel_case_ {
+    channel *c;
+    sem_t *sem;
+    void *elt;
+    channel_waiter_ *waiter;
+    channel_op op;
+} channel_case_;
 
-#if _POSIX_TIMEOUTS >= 200112L
-#define ch_timedrecv(chan, offset, elt_) __extension__({ \
-    __label__ cleanup; \
-    __label__ cleanup1; \
-    __label__ cleanup2; \
-    struct timespec Xts_ = channel_add_offset_(offset); \
-    __auto_type Xc_ = chan; \
-    int Xret_ = CH_OK; \
-    if (pthread_mutex_timedlock(&Xc_->rlock, &Xts_) == ETIMEDOUT) { \
-        Xret_ = CH_BUSY | CH_TIMEDOUT; \
-        goto cleanup2; \
-    } \
-    if (pthread_mutex_timedlock(&Xc_->lock, &Xts_) == ETIMEDOUT) { \
-        Xret_ = CH_BUSY | CH_TIMEDOUT; \
-        goto cleanup1; \
-    } \
-    if (Xc_->cap > 0) { \
-        while (Xc_->read == Xc_->write) { \
-            if (Xc_->closed) { \
-                Xret_ = CH_CLOSED; \
-                goto cleanup; \
-            } \
-            if (pthread_cond_timedwait(&Xc_->empty, &Xc_->lock, &Xts_) == \
-                    ETIMEDOUT) { \
-                Xret_ = (Xc_->closed ? CH_CLOSED : CH_EMPTY) | CH_TIMEDOUT; \
-                goto cleanup; \
-            } \
-        } \
-        elt_ = Xc_->buf[Xc_->read++ & (Xc_->cap - 1)]; \
-        pthread_cond_signal(&Xc_->full); \
-    } else { \
-        while (Xc_->write == 0) { \
-            if (Xc_->closed) { \
-                Xret_ = CH_CLOSED; \
-                goto cleanup; \
-            } \
-            if (pthread_cond_timedwait(&Xc_->empty, &Xc_->lock, &Xts_) == \
-                    ETIMEDOUT) { \
-                Xret_ = (Xc_->closed ? CH_CLOSED : CH_EMPTY) | CH_TIMEDOUT; \
-                goto cleanup; \
-            } \
-        } \
-        elt_ = *Xc_->buf; \
-        Xc_->write = 0; \
-        pthread_cond_signal(&Xc_->full); \
-    } \
-cleanup: \
-    pthread_mutex_unlock(&Xc_->lock); \
-cleanup1: \
-    pthread_mutex_unlock(&Xc_->rlock); \
-cleanup2: \
-    Xret_; })
-#else
-#define ch_timedrecv(chan, offset ,elt_) \
-    _Pragma ("GCC error \"pthread_mutex_timedlock is not implemented \"")
-#endif
+typedef struct channel_set {
+    uint32_t len, cap;
+    channel_case_ *arr;
+    sem_t sem;
+} channel_set;
 
-#define ch_poll(casec) { \
-    bool Xdone_ = false; \
+#define ch_load_rlx_(obj) atomic_load_explicit(obj, memory_order_relaxed)
+#define ch_load_acq_(obj) atomic_load_explicit(obj, memory_order_acquire)
+#define ch_load_seq_cst_(obj) atomic_load_explicit(obj, memory_order_seq_cst)
+#define ch_store_rlx_(obj, des) \
+    atomic_store_explicit(obj, des, memory_order_relaxed)
+#define ch_store_rel_(obj, des) \
+    atomic_store_explicit(obj, des, memory_order_release)
+#define ch_store_seq_cst_(obj, des) \
+    atomic_store_explicit(obj, des, memory_order_seq_cst)
+#define ch_faa_acq_rel_(obj, arg) \
+    atomic_fetch_add_explicit(obj, arg, memory_order_acq_rel)
+#define ch_fas_acq_rel_(obj, arg) \
+    atomic_fetch_sub_explicit(obj, arg, memory_order_acq_rel)
+#define ch_cas_weak_(obj, exp, des) \
+    atomic_compare_exchange_weak_explicit( \
+        obj, exp, des, memory_order_seq_cst, memory_order_relaxed)
+#define ch_cas_strong_(obj, exp, des) \
+    atomic_compare_exchange_strong_explicit( \
+        obj, exp, des, memory_order_seq_cst, memory_order_relaxed)
+
+/* ch_assert_ never becomes a noop, even when NDEBUG is set. */
+#define ch_assert_(pred) \
+    (__builtin_expect(!(pred), 0) ? \
+        channel_assert_(__FILE__, __LINE__, #pred) : (void)0)
+
+__attribute__((noreturn)) inline void
+channel_assert_(const char *file, unsigned line, const char *pred) {
+    fprintf(stderr, "Failed assertion: %s, %u, %s\n", file, line, pred);
+    abort();
+}
+
+/* Allocates a new channel. If the capacity is 0 then the channel is
+ * unbuffered. Otherwise the channel is buffered. Returns NULL. */
+inline channel *
+channel_make(size_t eltsize, uint32_t cap) {
+    channel *c;
+    if (cap > 0) {
+        ch_assert_((c = calloc(
+            1, offsetof(channel_buf_, buf) + (cap * ch_cellsize_(eltsize)))));
+        ch_store_rlx_(&c->buf.read.u32.lap, 1);
+    } else {
+        ch_assert_((c = calloc(1, sizeof(c->unbuf))));
+    }
+    c->hdr.cap = cap;
+    ch_store_rlx_(&c->hdr.refc, 1);
+    c->hdr.eltsize = eltsize;
+    c->hdr.lock = (pthread_mutex_t)PTHREAD_MUTEX_INITIALIZER;
+    return c;
+}
+
+/* Increases the reference count of the channel and returns it. Intended to be
+ * used with multiple producers that independently close the channel. */
+inline channel *
+channel_dup(channel *c) {
+    ch_assert_(ch_faa_acq_rel_(&c->hdr.refc, 1) != 0);
+    return c;
+}
+
+inline channel_waiter_ *
+channel_waitq_push_(
+    channel_waiter_ *_Atomic *waitq,
+    sem_t *sem,
+    _Atomic uint32_t *state,
+    uint32_t sel_id,
+    void *elt
+) {
+    channel_waiter_ *w;
+    if (!elt) {
+        ch_assert_((w = malloc(sizeof(w->buf))));
+    } else {
+        ch_assert_((w = malloc(sizeof(w->unbuf))));
+        w->unbuf.closed = false;
+        w->unbuf.elt = elt;
+    }
+    w->hdr.next = NULL;
+    w->hdr.sem = sem;
+    w->hdr.sel_state = state;
+    w->unbuf.sel_id = sel_id;
+
+    channel_waiter_ *wq = ch_load_acq_(waitq);
+    if (!wq) {
+        ch_store_seq_cst_(waitq, w);
+        w->hdr.prev = w;
+    } else {
+        w->hdr.prev = wq->hdr.prev;
+        wq->hdr.prev = w;
+        w->hdr.prev->hdr.next = w;
+    }
+    return w;
+}
+
+inline bool
+channel_waitq_remove(channel_waiter_ *_Atomic *waitq, channel_waiter_ *w) {
+    if (!w->hdr.prev) { // Already shifted off the front
+        return false;
+    }
+    if (w->hdr.prev == w) { // `w` is the only element
+        ch_store_seq_cst_(waitq, NULL);
+        return true;
+    }
+
+    if (w->hdr.prev->hdr.next) {
+        w->hdr.prev->hdr.next = w->hdr.next;
+    }
+    if (w->hdr.next) {
+        w->hdr.next->hdr.prev = w->hdr.prev;
+    } else {
+        ch_load_acq_(waitq)->hdr.prev = w->hdr.prev;
+    }
+    return true;
+}
+
+inline channel_waiter_ *
+channel_waitq_shift_(channel_waiter_ *_Atomic *waitq) {
+    channel_waiter_ *w = ch_load_acq_(waitq);
+    if (w) {
+        if (w->hdr.next) {
+            w->hdr.next->hdr.prev = w->hdr.prev;
+        }
+        ch_store_seq_cst_(waitq, w->hdr.next);
+        w->hdr.prev = NULL; // For channel_waitq_remove
+    }
+    return w;
+}
+
+/* Closes the channel if the caller has the last reference to the channel.
+ * Decreases the reference count otherwise. Attempting to send on a closed
+ * channel immediately returns an error code. Receiving on a closed channel
+ * succeeds until the channel is emptied. */
+inline void
+channel_close(channel *c) {
+    uint32_t refc = ch_fas_acq_rel_(&c->hdr.refc, 1);
+    if (refc != 1) {
+        ch_assert_(refc != 0);
+        return;
+    }
+
+    pthread_mutex_lock(&c->hdr.lock);
+    if (c->hdr.cap > 0) {
+        while (ch_load_acq_(&c->buf.sendq)) {
+            channel_waiter_buf_ *w = &channel_waitq_shift_(&c->buf.sendq)->buf;
+            sem_post(w->sem);
+        }
+        while (ch_load_acq_(&c->buf.recvq)) {
+            channel_waiter_buf_ *w = &channel_waitq_shift_(&c->buf.recvq)->buf;
+            sem_post(w->sem);
+        }
+    } else {
+        while (ch_load_acq_(&c->unbuf.sendq)) {
+            channel_waiter_unbuf_ *w = &channel_waitq_shift_(
+                &c->unbuf.sendq)->unbuf;
+            w->closed = true;
+            sem_post(w->sem);
+        }
+        while (ch_load_acq_(&c->unbuf.recvq)) {
+            channel_waiter_unbuf_ *w = &channel_waitq_shift_(
+                &c->unbuf.recvq)->unbuf;
+            w->closed = true;
+            sem_post(w->sem);
+        }
+    }
+    pthread_mutex_unlock(&c->hdr.lock);
+}
+
+/* Deallocates all resources associated with the channel. */
+inline channel *
+channel_drop(channel *c) {
+    ch_assert_(pthread_mutex_destroy(&c->hdr.lock) == 0);
+    free(c);
+    return NULL;
+}
+
+inline int
+channel_buf_res_cell_(channel_buf_ *c, char **cell, uint32_t *lap) {
+    for (int i = 0; ; ) {
+        if (ch_load_acq_(&c->refc) == 0) {
+            return CH_CLOSED;
+        }
+
+        channel_un64_ write = {ch_load_acq_(&c->write.u64)};
+        *cell = c->buf + (write.u32.index * ch_cellsize_(c->eltsize));
+        *lap = ch_load_acq_(ch_cell_lap_(*cell));
+        if (write.u32.lap != *lap) {
+            if (i++ < 4) { // Improves benchmarks; harmful in normal usage?
+                sched_yield();
+                continue;
+            }
+            return CH_FULL;
+        }
+
+        uint64_t write1 = write.u32.index + 1 < c->cap ?
+                write.u64 + 1 : (uint64_t)(write.u32.lap + 2) << 32;
+        if (ch_cas_weak_(&c->write.u64, &write.u64, write1)) {
+            return CH_OK;
+        }
+    }
+}
+
+inline void
+channel_buf_recvq_add_(channel_buf_ *c) {
+    if (ch_load_acq_(&c->recvq)) {
+        pthread_mutex_lock(&c->lock);
+        channel_waiter_buf_ *w = &channel_waitq_shift_(&c->recvq)->buf;
+        pthread_mutex_unlock(&c->lock);
+        if (w) {
+            sem_post(w->sem);
+        }
+    }
+}
+
+inline int
+channel_buf_trysend_(channel_buf_ *c, void *elt) {
+    char *cell;
+    uint32_t lap;
+    int rc = channel_buf_res_cell_(c, &cell, &lap);
+    if (rc != CH_OK) {
+        return rc;
+    }
+
+    memcpy(ch_cell_elt_(cell), elt, c->eltsize);
+    ch_store_seq_cst_(ch_cell_lap_(cell), lap + 1);
+    channel_buf_recvq_add_(c);
+    return CH_OK;
+}
+
+inline int
+channel_unbuf_trysend_try_(channel_unbuf_ *c, channel_waiter_unbuf_ **w) {
+    for ( ; ; ) {
+        if (ch_load_acq_(&c->refc) == 0) {
+            return CH_CLOSED;
+        }
+        if (!ch_load_acq_(&c->recvq)) {
+            return CH_FULL;
+        }
+
+        pthread_mutex_lock(&c->lock);
+        if (ch_load_acq_(&c->refc) == 0) {
+            pthread_mutex_unlock(&c->lock);
+            return CH_CLOSED;
+        }
+        *w = &channel_waitq_shift_(&c->recvq)->unbuf;
+        pthread_mutex_unlock(&c->lock);
+        if (!*w) {
+            return CH_FULL;
+        }
+        if ((*w)->sel_state) {
+            uint32_t magic = CH_SEL_MAGIC_;
+            if (!ch_cas_strong_((*w)->sel_state, &magic, (*w)->sel_id)) {
+                continue;
+            }
+        }
+        return CH_OK;
+    }
+}
+
+inline int
+channel_unbuf_trysend_(channel_unbuf_ *c, void *elt) {
+    channel_waiter_unbuf_ *w;
+    int rc = channel_unbuf_trysend_try_(c, &w);
+    if (rc != CH_OK) {
+        return rc;
+    }
+
+    memcpy(w->elt, elt, c->eltsize);
+    sem_post(w->sem);
+    return CH_OK;
+}
+
+/* Nonblocking sends fail on buffered channels if the channel is full and fail
+ * on unbuffered channels if there is no waiting receiver. Returns `CH_OK` on
+ * success, `CH_FULL` on failure, or `CH_CLOSED` if the channel is closed. */
+inline int
+channel_trysend(channel *c, void *elt) {
+    if (c->hdr.cap > 0) {
+        return channel_buf_trysend_(&c->buf, elt);
+    }
+    return channel_unbuf_trysend_(&c->unbuf, elt);
+}
+
+inline int
+channel_buf_trysend_int_(channel_buf_ *c, int elt) {
+    char *cell;
+    uint32_t lap;
+    int rc = channel_buf_res_cell_(c, &cell, &lap);
+    if (rc != CH_OK) {
+        return rc;
+    }
+
+    *(int *)ch_cell_elt_(cell) = elt;
+    ch_store_seq_cst_(ch_cell_lap_(cell), lap + 1);
+    channel_buf_recvq_add_(c);
+    return CH_OK;
+}
+
+inline int
+channel_unbuf_trysend_int_(channel_unbuf_ *c, int elt) {
+    channel_waiter_unbuf_ *w;
+    int rc = channel_unbuf_trysend_try_(c, &w);
+    if (rc != CH_OK) {
+        return rc;
+    }
+
+    *(int *)w->elt = elt;
+    sem_post(w->sem);
+    return CH_OK;
+}
+
+/* Int version of channel_trysend. */
+inline int
+channel_trysend_int(channel *c, int elt) {
+    if (c->hdr.cap > 0) {
+        return channel_buf_trysend_int_(&c->buf, elt);
+    }
+    return channel_unbuf_trysend_int_(&c->unbuf, elt);
+}
+
+inline int
+channel_buf_tryrecv_(channel_buf_ *c, void *elt) {
+    for (int i = 0; ; ) {
+        channel_un64_ read = {ch_load_acq_(&c->read.u64)};
+        char *cell = c->buf + (read.u32.index * ch_cellsize_(c->eltsize));
+        uint32_t lap = ch_load_acq_(ch_cell_lap_(cell));
+        if (read.u32.lap != lap) {
+            if (ch_load_acq_(&c->refc) == 0) {
+                return CH_CLOSED;
+            }
+            if (i++ < 4) { // Improves benchmarks; harmful in normal usage?
+                sched_yield();
+                continue;
+            }
+            return CH_EMPTY;
+        }
+
+        uint64_t read1 = read.u32.index + 1 < c->cap ?
+                read.u64 + 1 : (uint64_t)(read.u32.lap + 2) << 32;
+        if (ch_cas_weak_(&c->read.u64, &read.u64, read1)) {
+            memcpy(elt, ch_cell_elt_(cell), c->eltsize);
+            ch_store_seq_cst_(ch_cell_lap_(cell), lap + 1);
+            if (ch_load_acq_(&c->sendq)) {
+                pthread_mutex_lock(&c->lock);
+                channel_waiter_buf_ *w = &channel_waitq_shift_(&c->sendq)->buf;
+                pthread_mutex_unlock(&c->lock);
+                if (w) {
+                    sem_post(w->sem);
+                }
+            }
+            return CH_OK;
+        }
+    }
+}
+
+inline int
+channel_unbuf_tryrecv_(channel_unbuf_ *c, void *elt) {
+    for ( ; ; ) {
+        if (ch_load_acq_(&c->refc) == 0) {
+            return CH_CLOSED;
+        }
+        if (!ch_load_acq_(&c->sendq)) {
+            return CH_EMPTY;
+        }
+
+        pthread_mutex_lock(&c->lock);
+        if (ch_load_acq_(&c->refc) == 0) {
+            pthread_mutex_unlock(&c->lock);
+            return CH_CLOSED;
+        }
+        channel_waiter_unbuf_ *w = &channel_waitq_shift_(&c->sendq)->unbuf;
+        pthread_mutex_unlock(&c->lock);
+        if (!w) {
+            return CH_EMPTY;
+        }
+        if (w->sel_state) {
+            uint32_t magic = CH_SEL_MAGIC_;
+            if (!ch_cas_strong_(w->sel_state, &magic, w->sel_id)) {
+                continue;
+            }
+        }
+        memcpy(elt, w->elt, c->eltsize);
+        sem_post(w->sem);
+        return CH_OK;
+    }
+}
+
+/* Nonblocking receives fail on buffered channels if the channel is empty and
+ * fail on unbuffered channels if there is no waiting sender. Returns `CH_OK`
+ * on success, `CH_EMPTY` on failure, or `CH_CLOSED` if the channel is closed.
+ */
+inline int
+channel_tryrecv(channel *c, void *elt) {
+    if (c->hdr.cap > 0) {
+        return channel_buf_tryrecv_(&c->buf, elt);
+    }
+    return channel_unbuf_tryrecv_(&c->unbuf, elt);
+}
+
+inline int
+channel_buf_forceres_cell_(channel_buf_ *c, char **cell, uint32_t *lap) {
+    for (bool full = false; ; ) {
+        if (ch_load_acq_(&c->refc) == 0) {
+            return CH_CLOSED;
+        }
+
+        channel_un64_ write = {ch_load_acq_(&c->write.u64)};
+        *cell = c->buf + (write.u32.index * ch_cellsize_(c->eltsize));
+        *lap = ch_load_acq_(ch_cell_lap_(*cell));
+        if (write.u32.lap != *lap) {
+            full = true;
+            channel_un64_ read = {ch_load_acq_(&c->read.u64)};
+            char *cell1 = c->buf + (read.u32.index * ch_cellsize_(c->eltsize));
+            uint32_t lap1 = ch_load_acq_(ch_cell_lap_(cell1));
+            if (read.u32.lap != lap1) {
+                continue;
+            }
+
+            uint64_t read1 = read.u32.index + 1 < c->cap ?
+                    read.u64 + 1 : (uint64_t)(read.u32.lap + 2) << 32;
+            if (ch_cas_weak_(&c->read.u64, &read.u64, read1)) {
+                ch_store_seq_cst_(ch_cell_lap_(cell1), lap1 + 1);
+            }
+            continue;
+        }
+
+        uint64_t write1 = write.u32.index + 1 < c->cap ?
+                write.u64 + 1 : (uint64_t)(write.u32.lap + 2) << 32;
+        if (ch_cas_weak_(&c->write.u64, &write.u64, write1)) {
+            return full ? CH_FULL : CH_OK;
+        }
+    }
+}
+
+/* Forced sends on buffered channels do not block and overwrite the oldest
+ * message if the buffer is full. Forced sends are not possible with unbuffered
+ * channels. Returns `CH_OK` on success or `CH_CLOSED` if the channel is
+ * closed.
+ *
+ * XXX Not well tested. */
+inline int
+channel_forcesend(channel *c_, void *elt) {
+    ch_assert_(c_->hdr.cap > 0);
+    channel_buf_ *c = &c_->buf;
+    char *cell;
+    uint32_t lap;
+    int rc = channel_buf_forceres_cell_(c, &cell, &lap);
+    if (rc != CH_CLOSED) {
+        memcpy(ch_cell_elt_(cell), elt, c->eltsize);
+        ch_store_seq_cst_(ch_cell_lap_(cell), lap + 1);
+        channel_buf_recvq_add_(c);
+    }
+    return rc;
+}
+
+/* Int version of channel_forcesend. */
+inline int
+channel_forcesend_int(channel *c_, int elt) {
+    ch_assert_(c_->hdr.cap > 0);
+    channel_buf_ *c = &c_->buf;
+    char *cell;
+    uint32_t lap;
+    int rc = channel_buf_forceres_cell_(c, &cell, &lap);
+    if (rc != CH_CLOSED) {
+        *(int *)ch_cell_elt_(cell) = elt;
+        ch_store_seq_cst_(ch_cell_lap_(cell), lap + 1);
+        channel_buf_recvq_add_(c);
+    }
+    return rc;
+}
+
+inline int
+channel_buf_send_(channel_buf_ *c, void *elt) {
+    for ( ; ; ) {
+        int rc = channel_buf_trysend_(c, elt);
+        if (rc != CH_FULL) {
+            return rc;
+        }
+
+        pthread_mutex_lock(&c->lock);
+        if (ch_load_acq_(&c->refc) == 0) {
+            pthread_mutex_unlock(&c->lock);
+            return CH_CLOSED;
+        }
+        sem_t sem;
+        sem_init(&sem, 0, 0);
+        channel_waiter_ *w = channel_waitq_push_(
+            &c->sendq, &sem, NULL, CH_SEL_NIL_, NULL);
+        channel_un64_ write = {ch_load_acq_(&c->write.u64)};
+        char *cell = c->buf + (write.u32.index * ch_cellsize_(c->eltsize));
+        if (write.u32.lap == ch_load_acq_(ch_cell_lap_(cell))) {
+            channel_waitq_remove(&c->sendq, w);
+            pthread_mutex_unlock(&c->lock);
+            sem_destroy(&sem);
+            free(w);
+            continue;
+        }
+        pthread_mutex_unlock(&c->lock);
+
+        sem_wait(&sem);
+        sem_destroy(&sem);
+        free(w);
+    }
+}
+
+inline int
+channel_unbuf_send_(channel_unbuf_ *c, void *elt) {
+    for ( ; ; ) {
+        if (ch_load_acq_(&c->refc) == 0) {
+            return CH_CLOSED;
+        }
+
+        pthread_mutex_lock(&c->lock);
+        if (ch_load_acq_(&c->refc) == 0) {
+            pthread_mutex_unlock(&c->lock);
+            return CH_CLOSED;
+        }
+        channel_waiter_unbuf_ *w = &channel_waitq_shift_(&c->recvq)->unbuf;
+        if (w) {
+            pthread_mutex_unlock(&c->lock);
+            if (w->sel_state) {
+                uint32_t magic = CH_SEL_MAGIC_;
+                if (!ch_cas_strong_(w->sel_state, &magic, w->sel_id)) {
+                    continue;
+                }
+            }
+            memcpy(w->elt, elt, c->eltsize);
+            sem_post(w->sem);
+            return CH_OK;
+        }
+        sem_t sem;
+        sem_init(&sem, 0, 0);
+        channel_waiter_unbuf_ *w1 = &channel_waitq_push_(
+            &c->sendq, &sem, NULL, CH_SEL_NIL_, elt)->unbuf;
+        pthread_mutex_unlock(&c->lock);
+
+        sem_wait(&sem);
+        int rc = w1->closed ? CH_CLOSED : CH_OK;
+        sem_destroy(&sem);
+        free(w1);
+        return rc;
+    }
+}
+
+/* Blocking sends block on buffered channels if the buffer is full and block on
+ * unbuffered channels if there is no waiting receiver. Returns `CH_OK` on
+ * success or `CH_CLOSED` if the channel is closed. */
+inline int
+channel_send(channel *c, void *elt) {
+    if (c->hdr.cap > 0) {
+        return channel_buf_send_(&c->buf, elt);
+    }
+    return channel_unbuf_send_(&c->unbuf, elt);
+}
+
+inline int
+channel_buf_send_int_(channel_buf_ *c, int elt) {
+    for ( ; ; ) {
+        int rc = channel_buf_trysend_int_(c, elt);
+        if (rc != CH_FULL) {
+            return rc;
+        }
+
+        pthread_mutex_lock(&c->lock);
+        if (ch_load_acq_(&c->refc) == 0) {
+            pthread_mutex_unlock(&c->lock);
+            return CH_CLOSED;
+        }
+        sem_t sem;
+        sem_init(&sem, 0, 0);
+        channel_waiter_ *w = channel_waitq_push_(
+            &c->sendq, &sem, NULL, CH_SEL_NIL_, NULL);
+        channel_un64_ write = {ch_load_acq_(&c->write.u64)};
+        char *cell = c->buf + (write.u32.index * ch_cellsize_(c->eltsize));
+        if (write.u32.lap == ch_load_acq_(ch_cell_lap_(cell))) {
+            channel_waitq_remove(&c->sendq, w);
+            pthread_mutex_unlock(&c->lock);
+            sem_destroy(&sem);
+            free(w);
+            continue;
+        }
+        pthread_mutex_unlock(&c->lock);
+
+        sem_wait(&sem);
+        sem_destroy(&sem);
+        free(w);
+    }
+}
+
+inline int
+channel_unbuf_send_int_(channel_unbuf_ *c, int elt) {
+    for ( ; ; ) {
+        if (ch_load_acq_(&c->refc) == 0) {
+            return CH_CLOSED;
+        }
+
+        pthread_mutex_lock(&c->lock);
+        if (ch_load_acq_(&c->refc) == 0) {
+            pthread_mutex_unlock(&c->lock);
+            return CH_CLOSED;
+        }
+        channel_waiter_unbuf_ *w = &channel_waitq_shift_(&c->recvq)->unbuf;
+        if (w) {
+            pthread_mutex_unlock(&c->lock);
+            if (w->sel_state) {
+                uint32_t magic = CH_SEL_MAGIC_;
+                if (!ch_cas_strong_(w->sel_state, &magic, w->sel_id)) {
+                    continue;
+                }
+            }
+            *(int *)w->elt = elt;
+            sem_post(w->sem);
+            return CH_OK;
+        }
+        sem_t sem;
+        sem_init(&sem, 0, 0);
+        channel_waiter_unbuf_ *w1 = &channel_waitq_push_(
+            &c->sendq, &sem, NULL, CH_SEL_NIL_, &elt)->unbuf;
+        pthread_mutex_unlock(&c->lock);
+
+        sem_wait(&sem);
+        int rc = w1->closed ? CH_CLOSED : CH_OK;
+        sem_destroy(&sem);
+        free(w1);
+        return rc;
+    }
+}
+
+/* Int version of channel_send. */
+inline int
+channel_send_int(channel *c, int elt) {
+    if (c->hdr.cap > 0) {
+        return channel_buf_send_int_(&c->buf, elt);
+    }
+    return channel_unbuf_send_int_(&c->unbuf, elt);
+}
+
+inline int
+channel_buf_recv_(channel_buf_ *c, void *elt) {
+    for ( ; ; ) {
+        int rc = channel_buf_tryrecv_(c, elt);
+        if (rc != CH_EMPTY) {
+            return rc;
+        }
+
+        pthread_mutex_lock(&c->lock);
+        sem_t sem;
+        sem_init(&sem, 0, 0);
+        channel_waiter_ *w = channel_waitq_push_(
+            &c->recvq, &sem, NULL, CH_SEL_NIL_, NULL);
+        channel_un64_ read = {ch_load_acq_(&c->read.u64)};
+        char *cell = c->buf + (read.u32.index * ch_cellsize_(c->eltsize));
+        if (read.u32.lap == ch_load_acq_(ch_cell_lap_(cell))) {
+            channel_waitq_remove(&c->recvq, w);
+            pthread_mutex_unlock(&c->lock);
+            sem_destroy(&sem);
+            free(w);
+            continue;
+        }
+        if (ch_load_acq_(&c->refc) == 0) {
+            channel_waitq_remove(&c->recvq, w);
+            pthread_mutex_unlock(&c->lock);
+            sem_destroy(&sem);
+            free(w);
+            return CH_CLOSED;
+        }
+        pthread_mutex_unlock(&c->lock);
+
+        sem_wait(&sem);
+        sem_destroy(&sem);
+        free(w);
+    }
+}
+
+inline int
+channel_unbuf_recv_(channel_unbuf_ *c, void *elt) {
+    for ( ; ; ) {
+        if (ch_load_acq_(&c->refc) == 0) {
+            return CH_CLOSED;
+        }
+
+        pthread_mutex_lock(&c->lock);
+        if (ch_load_acq_(&c->refc) == 0) {
+            pthread_mutex_unlock(&c->lock);
+            return CH_CLOSED;
+        }
+        channel_waiter_unbuf_ *w = &channel_waitq_shift_(&c->sendq)->unbuf;
+        if (w) {
+            pthread_mutex_unlock(&c->lock);
+            if (w->sel_state) {
+                uint32_t magic = CH_SEL_MAGIC_;
+                if (!ch_cas_strong_(w->sel_state, &magic, w->sel_id)) {
+                    continue;
+                }
+            }
+            memcpy(elt, w->elt, c->eltsize);
+            sem_post(w->sem);
+            return CH_OK;
+        }
+        sem_t sem;
+        sem_init(&sem, 0, 0);
+        channel_waiter_unbuf_ *w1 = &channel_waitq_push_(
+            &c->recvq, &sem, NULL, CH_SEL_NIL_, elt)->unbuf;
+        pthread_mutex_unlock(&c->lock);
+
+        sem_wait(&sem);
+        int rc = w1->closed ? CH_CLOSED : CH_OK;
+        sem_destroy(&sem);
+        free(w1);
+        return rc;
+    }
+}
+
+/* Blocking receives block on buffered channels if the buffer is empty and
+ * block on unbuffered channels if there is no waiting sender. Returns `CH_OK`
+ * on success or `CH_CLOSED` if the channel is closed. */
+inline int
+channel_recv(channel *c, void *elt) {
+    if (c->hdr.cap > 0) {
+        return channel_buf_recv_(&c->buf, elt);
+    }
+    return channel_unbuf_recv_(&c->unbuf, elt);
+}
+
+/* Allocates a new channel set. The cap is not a hard limit but a realloc must
+ * be done every time it must grow past the current capacity. */
+inline channel_set *
+channel_set_make(uint32_t cap) {
+    channel_set *s = malloc(sizeof(*s));
+    ch_assert_(s && cap != 0);
+    ch_assert_((s->arr = malloc((s->cap = cap) * sizeof(s->arr[0]))));
+    s->len = 0;
+    sem_init(&s->sem, 0, 0);
+    return s;
+}
+
+/* Deallocates all resources associated with the channel set. Returns NULL. */
+inline channel_set *
+channel_set_drop(channel_set *s) {
+    free(s->arr);
+    free(s);
+    return NULL;
+}
+
+/* Adds a channel to the channel set and registers the specified operation and
+ * element. */
+inline uint32_t
+channel_set_add(channel_set *s, channel *c, channel_op op, void *elt) {
+    if (s->len == s->cap) {
+        ch_assert_((
+            s->arr = realloc(s->arr, (s->cap *= 2) * sizeof(s->arr[0]))));
+    }
+    ch_assert_(s->len < CH_SEL_NIL_ - 1); // Assert s->len < RAND_MAX maybe?
+    s->arr[s->len] = (channel_case_){c, &s->sem, elt, NULL, op};
+    return s->len++;
+}
+
+/* Change the registered op or element of the specified channel in the channel
+ * set. */
+inline void
+channel_set_rereg(channel_set *s, uint32_t id, channel_op op, void *elt) {
+    s->arr[id].op = op;
+    s->arr[id].elt = elt;
+}
+
+inline bool
+channel_select_test_all_(
+    channel_set *s, uint32_t *selrc, uint32_t offset
+) {
+    for (uint32_t i = 0; i < s->len; i++) {
+        channel_case_ cc = s->arr[(i + offset) % s->len];
+        if (cc.op == CH_NOOP) {
+            continue;
+        }
+
+        int rc;
+        if (cc.op == CH_SEND) {
+            rc = channel_trysend(cc.c, cc.elt);
+        } else {
+            rc = channel_tryrecv(cc.c, cc.elt);
+        }
+        if (rc == CH_OK) {
+            *selrc = (i + offset) % s->len;
+            return true;
+        }
+    }
+    return false;
+}
+
+inline bool
+channel_select_ready_(channel *c, channel_op op) {
+    if (c->hdr.cap > 0) {
+        channel_un64_ u;
+        if (op == CH_SEND) {
+            u.u64 = ch_load_acq_(&c->buf.write.u64);
+        } else {
+            u.u64 = ch_load_acq_(&c->buf.read.u64);
+        }
+        char *cell = c->buf.buf + (u.u32.index * ch_cellsize_(c->buf.eltsize));
+        if (u.u32.lap == ch_load_acq_(ch_cell_lap_(cell))) {
+            return true;
+        }
+        return false;
+    }
+
+    if (op == CH_SEND) { // Could just do the operation here?
+        return ch_load_acq_(&c->unbuf.recvq);
+    }
+    return ch_load_acq_(&c->unbuf.sendq);
+}
+
+inline channel_select_rc_
+channel_select_ready_or_wait_(
+    channel_set *s, _Atomic uint32_t *state, uint32_t offset
+) {
+    uint32_t closedc = 0;
+    for (uint32_t i = 0; i < s->len; i++) {
+        channel_case_ *cc = s->arr + ((i + offset) % s->len);
+        if (cc->op == CH_NOOP || ch_load_acq_(&cc->c->hdr.refc) == 0) {
+            closedc++;
+            continue;
+        }
+
+        void *elt = cc->c->hdr.cap > 0 ? NULL : cc->elt;
+        channel_waiter_ *_Atomic *waitq = cc->op == CH_SEND ?
+                &cc->c->hdr.sendq : &cc->c->hdr.recvq;
+        assert(cc->waiter == NULL);
+        pthread_mutex_lock(&cc->c->hdr.lock);
+        cc->waiter = channel_waitq_push_(
+            waitq, &s->sem, state, (i + offset) % s->len, elt);
+        if (channel_select_ready_(cc->c, cc->op)) {
+            channel_waitq_remove(waitq, cc->waiter);
+            pthread_mutex_unlock(&cc->c->hdr.lock);
+            free(cc->waiter);
+            cc->waiter = NULL;
+            return CH_SEL_RC_READY_;
+        }
+        pthread_mutex_unlock(&cc->c->hdr.lock);
+    }
+
+    if (closedc == s->len) {
+        return CH_SEL_RC_CLOSED_;
+    }
+    return CH_SEL_RC_WAIT_;
+}
+
+inline void
+channel_select_remove_waiters_(channel_set *s) {
+    for (uint32_t i = 0; i < s->len; i++) {
+        channel_case_ *cc = s->arr + i;
+        if (cc->op == CH_NOOP ||
+                ch_load_acq_(&cc->c->hdr.refc) == 0 ||
+                !cc->waiter) {
+            continue;
+        }
+        channel_waiter_ *_Atomic *waitq = cc->op == CH_SEND ?
+                &cc->c->hdr.sendq : &cc->c->hdr.recvq;
+        pthread_mutex_lock(&cc->c->hdr.lock);
+        channel_waitq_remove(waitq, cc->waiter);
+        free(cc->waiter);
+        pthread_mutex_unlock(&cc->c->hdr.lock);
+        cc->waiter = NULL;
+    }
+}
+
+/* Randomly performs the registered operation on one channel in the channel set
+ * that is ready to perform that operation. Blocks if no channel is ready.
+ * Returns the id of the channel successfully completes its operation or
+ * `CH_SEL_CLOSED` if all channels are closed or have been registered with
+ * `CH_NOOP`.
+ *
+ * XXX Not well tested.
+ * TODO Add timeout. */
+inline uint32_t
+channel_select(channel_set *s) {
+    uint32_t offset = rand() % s->len;
+    for ( ; ; ) {
+        uint32_t rc;
+        if (channel_select_test_all_(s, &rc, offset)) {
+            return rc;
+        }
+
+        _Atomic uint32_t state;
+        uint32_t magic = CH_SEL_MAGIC_;
+        ch_store_rel_(&state, magic); // Could be store_rlx_?
+        switch (channel_select_ready_or_wait_(s, &state, offset)) {
+        case CH_SEL_RC_CLOSED_:
+            return CH_SEL_CLOSED;
+        case CH_SEL_RC_READY_:
+            break;
+        case CH_SEL_RC_WAIT_:
+            sem_wait(&s->sem);
+        }
+
+        ch_cas_strong_(&state, &magic, CH_SEL_NIL_);
+        channel_select_remove_waiters_(s);
+        if (state < CH_SEL_NIL_) {
+            return state;
+        }
+    }
+}
+
+/* ch_poll is an alternative to ch_select. It continually loops over the cases
+ * (`op` is intended to be either ch_trysend or ch_tryrecv) rather than
+ * blocking, which may be preferable in cases where one of the operations is
+ * expected to succeed or if there is a default case. Burns a lot of cycles
+ * otherwise. */
+#define ch_poll(casec) if (1) { \
     switch (rand() % casec) { \
-    for ( ; ; Xdone_ = true)
+    for (bool Xdone_ = false; ; Xdone_ = true)
 
 #define ch_case(id, op, ...) \
     case id: \
-    if (op == CH_OK) { \
-        __VA_ARGS__; \
-        break; \
-    } else (void)0
+        if (op == CH_OK) { \
+            __VA_ARGS__; \
+            break; \
+        } else (void)0
 
 #define ch_default(...) \
     if (Xdone_) { \
@@ -395,19 +1194,5 @@ cleanup2: \
         break; \
     } else (void)0
 
-#define ch_poll_end } }
-
-static inline struct timespec
-channel_add_offset_(long offset) {
-    struct timespec ts;
-    clock_gettime(CLOCK_REALTIME, &ts);
-    ts.tv_nsec += (offset % 1000) * 1000000;
-    if (ts.tv_nsec > 1000000000) {
-        ts.tv_nsec -= 1000000000;
-        ts.tv_sec++;
-    }
-    ts.tv_sec += (offset - (offset % 1000)) / 1000;
-    return ts;
-}
-
+#define ch_poll_end } } else (void)0
 #endif

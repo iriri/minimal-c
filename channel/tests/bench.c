@@ -1,7 +1,7 @@
 #include <assert.h>
 #include <pthread.h>
 #include <stdio.h>
-#include "channel.h"
+#include "../channel.h"
 
 #define THREADC 16
 #define LIM 100000ll
@@ -12,7 +12,7 @@ void *
 sender(void *arg) {
     channel *chan = (channel *)arg;
     for (int i = 1; i <= LIM; i++) {
-        ch_send(chan, int, i);
+        ch_send(chan, i);
     }
     ch_close(chan);
     return NULL;
@@ -23,7 +23,7 @@ receiver(void *arg) {
     channel *chan = (channel *)arg;
     int i;
     long long sum = 0;
-    while (ch_recv(chan, int, i) != CH_CLOSED) {
+    while (ch_recv(chan, i) != CH_CLOSED) {
         sum += i;
     }
     printf("%lld\n", sum);
@@ -32,7 +32,7 @@ receiver(void *arg) {
 
 int
 main() {
-    channel *chan = ch_make(int, 16);
+    channel *chan = ch_make(int, 8);
     pthread_t senders[THREADC];
     pthread_t recvers[THREADC];
     for (int i = 0; i < THREADC; i++) {
