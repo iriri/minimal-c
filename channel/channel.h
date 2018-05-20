@@ -32,38 +32,24 @@
 #error "The changes for big endian are trivial but I need a box to test on."
 #endif
 
-static_assert(
-    sizeof(uintptr_t) >= sizeof(int),
-    "The send_int functions assume sizeof(intptr_t) >= sizeof(int).");
-
 /* ------------------------------- Interface ------------------------------- */
 #define CHANNEL_H_VERSION 0l // 0.0.0
 
 /* Exported "functions"
  *
- * TODO Use GNU statement expressions (or thread local variables) to cast and
- * assign from the result of res_cell/similar instead of using the & operator
- * and memcpy, increasing type safety and also avoiding the need for C11
- * generic selection making this library GNU99 (or C99) compatible.  */
+ * TODO Use GNU statement expressions to cast and assign from the result of
+ * res_cell/similar instead of using the & operator, sizeof, and memcpy,
+ * increasing type safety and supporting the sending of function pointers and
+ * literals. */
 #define ch_make(type, cap) channel_make(sizeof(type), cap)
 #define ch_dup(c) channel_dup(c)
 #define ch_close(c) channel_close(c)
 #define ch_drop(c) channel_drop(c)
 
-/* Ints are special-cased via C11 generic slection to make it possible to send,
- * e.g., opcodes without having to create a temporary variable. However, C's
- * "generics" are truly horrible. The cast is required because all branches
- * must be valid expressions even though only one is chosen at compile time. */
-#define ch_send(c, elt) (\
-    assert(sizeof(elt) == c->hdr.eltsize), \
-    _Generic(elt, \
-        int: channel_send_int(c, (int)(elt)), \
-        default: channel_send(c, &(elt))))
-#define ch_trysend(c, elt) (\
-    assert(sizeof(elt) == c->hdr.eltsize), \
-    _Generic(elt, \
-        int: channel_trysend_int(c, (int)(elt)), \
-        default: channel_trysend(c, &(elt))))
+#define ch_send(c, elt) \
+    (assert(sizeof(elt) == c->hdr.eltsize), channel_send(c, &(elt)))
+#define ch_trysend(c, elt) \
+    (assert(sizeof(elt) == c->hdr.eltsize), channel_trysend(c, &(elt)))
 #if 0
 #define ch_timedsend(c, elt) (\
     assert(sizeof(elt) == c->hdr.eltsize), \
@@ -71,11 +57,8 @@ static_assert(
         int: channel_timedsend_int(c, (int)(elt)), \
         default: channel_timedsend(c, &(elt))))
 #endif
-#define ch_forcesend(c, elt) (\
-    assert(sizeof(elt) == c->hdr.eltsize), \
-    _Generic(elt, \
-        int: channel_forcesend_int(c, (int)(elt)), \
-        default: channel_forcesend(c, &(elt))))
+#define ch_forcesend(c, elt) \
+    (assert(sizeof(elt) == c->hdr.eltsize), channel_forcesend(c, &(elt)))
 
 #define ch_recv(c, elt) \
     (assert(sizeof(elt) == c->hdr.eltsize), channel_recv(c, &(elt)))
@@ -132,22 +115,15 @@ typedef enum channel_op {
         channel_unbuf_ *, channel_waiter_unbuf_ **); \
     extern inline int channel_unbuf_trysend_(channel_unbuf_ *, void *); \
     extern inline int channel_trysend(channel *, void *); \
-    extern inline int channel_buf_trysend_int_(channel_buf_ *, int); \
-    extern inline int channel_unbuf_trysend_int_(channel_unbuf_ *, int); \
-    extern inline int channel_trysend_int(channel *, int); \
     extern inline int channel_buf_tryrecv_(channel_buf_ *, void *); \
     extern inline int channel_unbuf_tryrecv_(channel_unbuf_ *, void *); \
     extern inline int channel_tryrecv(channel *, void *); \
     extern inline int channel_buf_forceres_cell_( \
         channel_buf_ *, char **, uint32_t *); \
     extern inline int channel_forcesend(channel *, void *); \
-    extern inline int channel_forcesend_int(channel *, int); \
     extern inline int channel_buf_send_(channel_buf_ *, void *); \
     extern inline int channel_unbuf_send_(channel_unbuf_ *, void *); \
     extern inline int channel_send(channel *, void *); \
-    extern inline int channel_buf_send_int_(channel_buf_ *, int); \
-    extern inline int channel_unbuf_send_int_(channel_unbuf_ *, int); \
-    extern inline int channel_send_int(channel *, int); \
     extern inline int channel_buf_recv_(channel_buf_ *, void *); \
     extern inline int channel_unbuf_recv_(channel_unbuf_ *, void *); \
     extern inline int channel_recv(channel *, void *); \
@@ -554,43 +530,6 @@ channel_trysend(channel *c, void *elt) {
 }
 
 inline int
-channel_buf_trysend_int_(channel_buf_ *c, int elt) {
-    char *cell;
-    uint32_t lap;
-    int rc = channel_buf_res_cell_(c, &cell, &lap);
-    if (rc != CH_OK) {
-        return rc;
-    }
-
-    *(int *)ch_cell_elt_(cell) = elt;
-    ch_store_seq_cst_(ch_cell_lap_(cell), lap + 1);
-    channel_buf_recvq_add_(c);
-    return CH_OK;
-}
-
-inline int
-channel_unbuf_trysend_int_(channel_unbuf_ *c, int elt) {
-    channel_waiter_unbuf_ *w;
-    int rc = channel_unbuf_trysend_try_(c, &w);
-    if (rc != CH_OK) {
-        return rc;
-    }
-
-    *(int *)w->elt = elt;
-    sem_post(w->sem);
-    return CH_OK;
-}
-
-/* Int version of channel_trysend. */
-inline int
-channel_trysend_int(channel *c, int elt) {
-    if (c->hdr.cap > 0) {
-        return channel_buf_trysend_int_(&c->buf, elt);
-    }
-    return channel_unbuf_trysend_int_(&c->unbuf, elt);
-}
-
-inline int
 channel_buf_tryrecv_(channel_buf_ *c, void *elt) {
     for (int i = 0; ; ) {
         channel_un64_ read = {ch_load_acq_(&c->read.u64)};
@@ -725,22 +664,6 @@ channel_forcesend(channel *c_, void *elt) {
     return rc;
 }
 
-/* Int version of channel_forcesend. */
-inline int
-channel_forcesend_int(channel *c_, int elt) {
-    ch_assert_(c_->hdr.cap > 0);
-    channel_buf_ *c = &c_->buf;
-    char *cell;
-    uint32_t lap;
-    int rc = channel_buf_forceres_cell_(c, &cell, &lap);
-    if (rc != CH_CLOSED) {
-        *(int *)ch_cell_elt_(cell) = elt;
-        ch_store_seq_cst_(ch_cell_lap_(cell), lap + 1);
-        channel_buf_recvq_add_(c);
-    }
-    return rc;
-}
-
 inline int
 channel_buf_send_(channel_buf_ *c, void *elt) {
     for ( ; ; ) {
@@ -823,88 +746,6 @@ channel_send(channel *c, void *elt) {
         return channel_buf_send_(&c->buf, elt);
     }
     return channel_unbuf_send_(&c->unbuf, elt);
-}
-
-inline int
-channel_buf_send_int_(channel_buf_ *c, int elt) {
-    for ( ; ; ) {
-        int rc = channel_buf_trysend_int_(c, elt);
-        if (rc != CH_FULL) {
-            return rc;
-        }
-
-        pthread_mutex_lock(&c->lock);
-        if (ch_load_acq_(&c->refc) == 0) {
-            pthread_mutex_unlock(&c->lock);
-            return CH_CLOSED;
-        }
-        sem_t sem;
-        sem_init(&sem, 0, 0);
-        channel_waiter_ *w = channel_waitq_push_(
-            &c->sendq, &sem, NULL, CH_SEL_NIL_, NULL);
-        channel_un64_ write = {ch_load_acq_(&c->write.u64)};
-        char *cell = c->buf + (write.u32.index * ch_cellsize_(c->eltsize));
-        if (write.u32.lap == ch_load_acq_(ch_cell_lap_(cell))) {
-            channel_waitq_remove(&c->sendq, w);
-            pthread_mutex_unlock(&c->lock);
-            sem_destroy(&sem);
-            free(w);
-            continue;
-        }
-        pthread_mutex_unlock(&c->lock);
-
-        sem_wait(&sem);
-        sem_destroy(&sem);
-        free(w);
-    }
-}
-
-inline int
-channel_unbuf_send_int_(channel_unbuf_ *c, int elt) {
-    for ( ; ; ) {
-        if (ch_load_acq_(&c->refc) == 0) {
-            return CH_CLOSED;
-        }
-
-        pthread_mutex_lock(&c->lock);
-        if (ch_load_acq_(&c->refc) == 0) {
-            pthread_mutex_unlock(&c->lock);
-            return CH_CLOSED;
-        }
-        channel_waiter_unbuf_ *w = &channel_waitq_shift_(&c->recvq)->unbuf;
-        if (w) {
-            pthread_mutex_unlock(&c->lock);
-            if (w->sel_state) {
-                uint32_t magic = CH_SEL_MAGIC_;
-                if (!ch_cas_strong_(w->sel_state, &magic, w->sel_id)) {
-                    continue;
-                }
-            }
-            *(int *)w->elt = elt;
-            sem_post(w->sem);
-            return CH_OK;
-        }
-        sem_t sem;
-        sem_init(&sem, 0, 0);
-        channel_waiter_unbuf_ *w1 = &channel_waitq_push_(
-            &c->sendq, &sem, NULL, CH_SEL_NIL_, &elt)->unbuf;
-        pthread_mutex_unlock(&c->lock);
-
-        sem_wait(&sem);
-        int rc = w1->closed ? CH_CLOSED : CH_OK;
-        sem_destroy(&sem);
-        free(w1);
-        return rc;
-    }
-}
-
-/* Int version of channel_send. */
-inline int
-channel_send_int(channel *c, int elt) {
-    if (c->hdr.cap > 0) {
-        return channel_buf_send_int_(&c->buf, elt);
-    }
-    return channel_unbuf_send_int_(&c->unbuf, elt);
 }
 
 inline int
@@ -1009,6 +850,7 @@ channel_set_make(uint32_t cap) {
 /* Deallocates all resources associated with the channel set. Returns NULL. */
 inline channel_set *
 channel_set_drop(channel_set *s) {
+    sem_destroy(&s->sem);
     free(s->arr);
     free(s);
     return NULL;

@@ -3,8 +3,8 @@ This library implements Go-style channels—MPMC blocking bounded queues with
 support for multiplexing. Changes have been made from Go's channel design to
 improve the multi-producer use case and reduce reliance on `select`. Buffered
 channels (queues with capacity of at least 1) are lock-free in the fast path.
-Currently requires C11; this may change in the future to either GNU99 (in which
-case a C11 version will still be maintained) or C99.
+Currently requires C99. I plan on doing a GNU99 version in the future that will
+provide a bit more safety and support sending function pointers and literals.
 
 TODO: Send, receive, and select with timeouts.
 
@@ -39,7 +39,7 @@ enum channel_op {
 ### Functions
 #### ch_make
 ```
-channel *ch_make(size_t eltsize, uint32_t cap)
+channel *ch_make(type T, uint32_t cap)
 ```
 Allocates a new channel. If the capacity is 0 then the channel is unbuffered.
 Otherwise the channel is buffered. Returns NULL.
