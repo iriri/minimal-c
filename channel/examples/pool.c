@@ -25,7 +25,7 @@ work(void *arg) {
 void
 count(void) {
     static atomic_int i;
-    printf("%d\n", atomic_fetch_add_explicit(&i, 1, memory_order_acq_rel));
+    printf("%d\n", atomic_fetch_add_explicit(&i, 1, memory_order_relaxed));
 }
 
 int

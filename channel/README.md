@@ -3,8 +3,8 @@ This library implements Go-style channels—MPMC blocking bounded queues with
 support for multiplexing. Changes have been made from Go's channel design to
 improve the multi-producer use case and reduce reliance on `select`. Buffered
 channels (queues with capacity of at least 1) are lock-free in the fast path.
-Currently requires C99. I plan on doing a GNU99 version in the future that will
-provide a bit more safety and support sending function pointers and literals.
+Currently requires C99. I plan on doing a GNU99 version sometime that will
+support sending function pointers and literals.
 
 TODO: Send, receive, and select with timeouts.
 
