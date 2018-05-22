@@ -5,7 +5,7 @@
 #include "../channel.h"
 
 CHANNEL_EXTERN_DECL;
-typedef struct fn { // Unfortunately required until I do a GNU99 version
+typedef struct fn { // Unfortunately required until I do a GNU11 version
     void (*ptr)(void);
 } fn;
 

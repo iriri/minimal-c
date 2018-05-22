@@ -9,35 +9,22 @@
 #include <string.h>
 #include <unistd.h>
 
-typedef struct vector {
-    char *arr;
-    size_t eltsize, len, cap;
-} vector;
+/* ------------------------------- Interface ------------------------------- */
+typedef struct vector vector;
 
 #define vec_make(type, len, cap) vector_make(sizeof(type), len, cap)
 #define vec_drop(v) vector_drop(v)
 
-#define vec_arr(v, type) (assert(sizeof(type) == v->eltsize), ((type *)v->arr))
-#define vec_put(v, index, elt) \
-    do { \
-        assert(sizeof(elt) == v->eltsize); \
-        __extension__ *(typeof(elt) *)vector_index(v, index) = elt; \
-    } while (0)
-#define vec_get(v, index, elt) \
-    do { \
-        assert(sizeof(elt) == v->eltsize); \
-        elt = __extension__ *(typeof(elt) *)vector_index(v, index); \
-    } while (0)
-#define vec_append(v, elt) \
-    do { \
-        assert(sizeof(elt) == v->eltsize); \
-        __extension__ *(typeof(elt) *)vector_append(v) = elt; \
-    } while (0)
+#define vec_arr(v, type) vec_arr_(v, type, __COUNTER__)
+#define vec_put(v, index, elt) vec_put_(v, index, elt, __COUNTER__)
+#define vec_get(v, index, elt) vec_get_(v, index, elt, __COUNTER__)
+#define vec_append(v, elt) vec_append_(v, elt, __COUNTER__)
 
 #define vec_concat(v1, v2) vector_concat(v1, v2)
 #define vec_find(v, elt) vector_find(v, &elt)
 #define vec_remove(v, index) vector_remove(v, index)
 
+/* These declarations must be present in exactly one compilation unit. */
 #define VECTOR_EXTERN_DECL \
     extern inline void vector_assert_( \
         const char *, unsigned, const char *) __attribute__((noreturn)); \
@@ -48,6 +35,44 @@ typedef struct vector {
     extern inline void vector_concat(vector *, vector *); \
     extern inline ssize_t vector_find(vector *, void *); \
     extern inline void vector_remove(vector *, ssize_t)
+
+/* ---------------------------- Implementation ---------------------------- */
+struct vector {
+    char *arr;
+    size_t eltsize, len, cap;
+};
+
+/* Almost hygenic... */
+#define vec_mc_(a, b) a##b
+
+/* GCC and Clang both do a good job of of eliminating any unnecessary variables
+ * at O1 and above. With NDEBUG, pretty much everything appears to be
+ * eliminated, as desired (needs more verification). (sizeof(typeof(elt)) is
+ * unfortunately required due to integer promotion on character literals. */
+#define vec_arr_(v, type, uniq) \
+    __extension__ ({ \
+        vector *vec_mc_(VEC_v, uniq) = v; \
+        assert(sizeof(type) == vec_mc_(VEC_v, uniq)->eltsize); \
+        (type *)vec_mc_(VEC_v, uniq)->arr; \
+    })
+#define vec_put_(v, index, elt, uniq) \
+    do { \
+        vector *vec_mc_(VEC_v, uniq) = v; \
+        assert(sizeof(__typeof__(elt)) == vec_mc_(VEC_v, uniq)->eltsize); \
+        *(__typeof__(elt) *)vector_index(vec_mc_(VEC_v, uniq), index) = elt; \
+    } while (0)
+#define vec_get_(v, index, elt, uniq) \
+    do { \
+        vector *vec_mc_(VEC_v, uniq) = v; \
+        assert(sizeof(__typeof__(elt)) == vec_mc_(VEC_v, uniq)->eltsize); \
+        elt = *(__typeof__(elt) *)vector_index(vec_mc_(VEC_v, uniq), index); \
+    } while (0)
+#define vec_append_(v, elt, uniq) \
+    do { \
+        vector *vec_mc_(VEC_v, uniq) = v; \
+        assert(sizeof(__typeof__(elt)) == vec_mc_(VEC_v, uniq)->eltsize); \
+        *(__typeof__(elt) *)vector_append(vec_mc_(VEC_v, uniq)) = elt; \
+    } while (0)
 
 /* vec_assert_ never becomes a noop, even when NDEBUG is set. */
 #define vec_assert_(pred) \
