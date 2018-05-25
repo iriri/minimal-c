@@ -1,2 +1,1 @@
-## vector.h
-GNU99.
+## Differences between the C99 and GNU99 versions

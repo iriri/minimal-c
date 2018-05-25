@@ -8,7 +8,6 @@
  * algorithms described in "Go channels on steroids" by Dmitry Vyukov. */
 #ifndef CHANNEL_H
 #define CHANNEL_H
-#include <assert.h>
 #include <pthread.h>
 #include <stdatomic.h>
 #include <stdbool.h>
@@ -36,43 +35,8 @@
 /* ------------------------------- Interface ------------------------------- */
 #define CHANNEL_H_VERSION 0l // 0.0.0
 
-/* Exported "functions"
- *
- * TODO Use GNU statement expressions to cast and assign from the result of
- * res_cell/similar instead of using the & operator, sizeof, and memcpy,
- * increasing type safety and supporting the sending of function pointers and
- * literals. */
-#define ch_make(type, cap) channel_make(sizeof(type), cap)
-#define ch_dup(c) channel_dup(c)
-#define ch_close(c) channel_close(c)
-#define ch_drop(c) channel_drop(c)
-
-#define ch_send(c, elt) \
-    (assert(sizeof(elt) == c->hdr.eltsize), channel_send(c, &(elt)))
-#define ch_trysend(c, elt) \
-    (assert(sizeof(elt) == c->hdr.eltsize), channel_trysend(c, &(elt)))
-#if 0
-#define ch_timedsend(c, elt) (\
-    assert(sizeof(elt) == c->hdr.eltsize), \
-    _Generic(elt, \
-        int: channel_timedsend_int(c, (int)(elt)), \
-        default: channel_timedsend(c, &(elt))))
-#endif
-#define ch_forcesend(c, elt) \
-    (assert(sizeof(elt) == c->hdr.eltsize), channel_forcesend(c, &(elt)))
-
-#define ch_recv(c, elt) \
-    (assert(sizeof(elt) == c->hdr.eltsize), channel_recv(c, &(elt)))
-#define ch_tryrecv(c, elt) \
-    (assert(sizeof(elt) == c->hdr.eltsize), channel_tryrecv(c, &(elt)))
-#define ch_timedrecv(c, elt) \
-    (assert(sizeof(elt) == c->hdr.eltsize), channel_timedrecv(c, &(elt)))
-
-#define ch_set_make(cap) channel_set_make(cap)
-#define ch_set_drop(s) channel_set_drop(s)
-#define ch_set_add(s, c, op, elt) channel_set_add(s, c, op, &(elt))
-#define ch_set_rereg(s, id, op, elt) channel_set_rereg(s, id, op, &(elt))
-#define ch_select(s) channel_select(s)
+typedef union channel channel;
+typedef struct channel_set channel_set;
 
 /* Return codes */
 #define CH_OK 0x0
@@ -89,6 +53,29 @@ typedef enum channel_op {
     CH_SEND,
     CH_RECV,
 } channel_op;
+
+/* Exported "functions" */
+#define ch_make(T, cap) channel_make(sizeof(T), cap)
+#define ch_dup(c) channel_dup(c)
+#define ch_close(c) channel_close(c)
+#define ch_drop(c) channel_drop(c)
+
+#define ch_send(c, elt) channel_send(c, &(elt), sizeof(elt))
+#define ch_trysend(c, elt) channel_trysend(c, &(elt), sizeof(elt))
+#define ch_timedsend(c, elt) channel_timedsend(c, &(elt), sizeof(elt))
+#define ch_forcesend(c, elt) channel_forcesend(c, &(elt), sizeof(elt))
+
+#define ch_recv(c, elt) channel_recv(c, &(elt), sizeof(elt))
+#define ch_tryrecv(c, elt) channel_tryrecv(c, &(elt), sizeof(elt))
+#define ch_timedrecv(c, elt) channel_timedrecv(c, &(elt), sizeof(elt))
+
+#define ch_set_make(cap) channel_set_make(cap)
+#define ch_set_drop(s) channel_set_drop(s)
+#define ch_set_add(s, c, op, elt) \
+    channel_set_add(s, c, op, &(elt), sizeof(elt))
+#define ch_set_rereg(s, id, op, elt) \
+    channel_set_rereg(s, id, op, &(elt), sizeof(elt))
+#define ch_select(s) channel_select(s)
 
 /* These declarations must be present in exactly one compilation unit. */
 #define CHANNEL_EXTERN_DECL \
@@ -115,25 +102,25 @@ typedef enum channel_op {
     extern inline int channel_unbuf_trysend_try_( \
         channel_unbuf_ *, channel_waiter_unbuf_ **); \
     extern inline int channel_unbuf_trysend_(channel_unbuf_ *, void *); \
-    extern inline int channel_trysend(channel *, void *); \
+    extern inline int channel_trysend(channel *, void *, size_t); \
     extern inline int channel_buf_tryrecv_(channel_buf_ *, void *); \
     extern inline int channel_unbuf_tryrecv_(channel_unbuf_ *, void *); \
-    extern inline int channel_tryrecv(channel *, void *); \
+    extern inline int channel_tryrecv(channel *, void *, size_t); \
     extern inline int channel_buf_forceres_cell_( \
         channel_buf_ *, char **, uint32_t *); \
-    extern inline int channel_forcesend(channel *, void *); \
+    extern inline int channel_forcesend(channel *, void *, size_t); \
     extern inline int channel_buf_send_(channel_buf_ *, void *); \
     extern inline int channel_unbuf_send_(channel_unbuf_ *, void *); \
-    extern inline int channel_send(channel *, void *); \
+    extern inline int channel_send(channel *, void *, size_t); \
     extern inline int channel_buf_recv_(channel_buf_ *, void *); \
     extern inline int channel_unbuf_recv_(channel_unbuf_ *, void *); \
-    extern inline int channel_recv(channel *, void *); \
+    extern inline int channel_recv(channel *, void *, size_t); \
     extern inline channel_set *channel_set_make(uint32_t); \
     extern inline channel_set *channel_set_drop(channel_set *); \
     extern inline uint32_t channel_set_add( \
-        channel_set *, channel *, channel_op, void *); \
+        channel_set *, channel *, channel_op, void *, size_t); \
     extern inline void channel_set_rereg( \
-        channel_set *, uint32_t, channel_op, void *); \
+        channel_set *, uint32_t, channel_op, void *, size_t); \
     extern inline bool channel_select_test_all_( \
         channel_set *, uint32_t *, uint32_t); \
     extern inline bool channel_select_ready_(channel *, channel_op); \
@@ -141,6 +128,16 @@ typedef enum channel_op {
         channel_set *, _Atomic uint32_t *, uint32_t offset); \
     extern inline void channel_select_remove_waiters_(channel_set *); \
     extern inline uint32_t channel_select(channel_set *)
+
+/* CH_PAD_CACHE_LINES is left undefined by default as cache line padding
+ * doesn't seem to make a difference in my tests. Feel free to define it if
+ * your testing shows that it helps. */
+#ifdef CH_PAD_CACHE_LINES
+#define CH_CACHE_LINE_ 128
+#define CH_PAD_(id, size) char pad##id[size];
+#else
+#define CH_PAD_(id, size)
+#endif
 
 /* ---------------------------- Implementation ---------------------------- */
 #define CH_SEL_MAGIC_ UINT32_MAX
@@ -151,23 +148,6 @@ typedef enum channel_select_rc_ {
     CH_SEL_RC_WAIT_,
     CH_SEL_RC_CLOSED_,
 } channel_select_rc_;
-
-#if _POSIX_SEMAPHORES < 200112L && defined __APPLE__
-#define sem_t dispatch_semaphore_t
-#define sem_init(sem, pshared, val) *(sem) = dispatch_semaphore_create(val)
-#define sem_post(sem) dispatch_semaphore_signal(*(sem))
-#define sem_wait(sem) dispatch_semaphore_wait(*(sem), DISPATCH_TIME_FOREVER)
-#define sem_destroy(sem) dispatch_release(*(sem))
-#endif
-
-/* If C had generics, the cell struct would be defined as follows:
- * typedef struct channel_cell_<T> {
- *     _Atomic uint32_t lap;
- *     T elt;
- * } channel_cell_<T>; */
-#define ch_cellsize_(eltsize) (sizeof(uint32_t) + eltsize)
-#define ch_cell_lap_(cell) ((_Atomic uint32_t *)cell)
-#define ch_cell_elt_(cell) (cell + sizeof(uint32_t))
 
 typedef union channel_aun64_ {
     _Atomic uint64_t u64;
@@ -184,6 +164,14 @@ typedef union channel_un64_ {
         uint32_t lap;
     } u32;
 } channel_un64_;
+
+#if _POSIX_SEMAPHORES < 200112L && defined __APPLE__
+#define sem_t dispatch_semaphore_t
+#define sem_init(sem, pshared, val) *(sem) = dispatch_semaphore_create(val)
+#define sem_post(sem) dispatch_semaphore_signal(*(sem))
+#define sem_wait(sem) dispatch_semaphore_wait(*(sem), DISPATCH_TIME_FOREVER)
+#define sem_destroy(sem) dispatch_release(*(sem))
+#endif
 
 typedef struct channel_waiter_hdr_ {
     union channel_waiter_ *prev, *next;
@@ -212,30 +200,55 @@ typedef union channel_waiter_ {
 
 typedef struct channel_hdr_ {
     uint32_t cap;
+        CH_PAD_(0, CH_CACHE_LINE_ - sizeof(uint32_t))
     _Atomic uint32_t refc;
+        CH_PAD_(1, CH_CACHE_LINE_ - sizeof(_Atomic uint32_t))
     size_t eltsize;
-    channel_waiter_ *_Atomic sendq, *_Atomic recvq;
+        CH_PAD_(2, CH_CACHE_LINE_ - sizeof(size_t))
+    channel_waiter_ *_Atomic sendq;
+        CH_PAD_(3, CH_CACHE_LINE_ - sizeof(channel_waiter_ *_Atomic))
+    channel_waiter_ *_Atomic recvq;
+        CH_PAD_(4, CH_CACHE_LINE_ - sizeof(channel_waiter_ *_Atomic))
     pthread_mutex_t lock;
 } channel_hdr_;
 
+/* If C had generics, the cell struct would be defined as follows:
+ * typedef struct channel_cell_<T> {
+ *     _Atomic uint32_t lap;
+ *     T elt;
+ * } channel_cell_<T>; */
+#define ch_cellsize_(eltsize) (sizeof(uint32_t) + eltsize)
+#define ch_cell_lap_(cell) ((_Atomic uint32_t *)cell)
+#define ch_cell_elt_(cell) (cell + sizeof(uint32_t))
+
 typedef struct channel_buf_ {
     uint32_t cap;
+        CH_PAD_(0, CH_CACHE_LINE_ - sizeof(uint32_t))
     _Atomic uint32_t refc;
+        CH_PAD_(1, CH_CACHE_LINE_ - sizeof(_Atomic uint32_t))
     size_t eltsize;
-    channel_waiter_ *_Atomic sendq, *_Atomic recvq;
+        CH_PAD_(2, CH_CACHE_LINE_ - sizeof(size_t))
+    channel_waiter_ *_Atomic sendq;
+        CH_PAD_(3, CH_CACHE_LINE_ - sizeof(channel_waiter_ *_Atomic))
+    channel_waiter_ *_Atomic recvq;
+        CH_PAD_(4, CH_CACHE_LINE_ - sizeof(channel_waiter_ *_Atomic))
     pthread_mutex_t lock;
-    channel_aun64_ write, read;
-    char buf[];
+        CH_PAD_(5, CH_CACHE_LINE_ - (sizeof(pthread_mutex_t) % CH_CACHE_LINE_))
+    channel_aun64_ write;
+        CH_PAD_(6, CH_CACHE_LINE_ - sizeof(channel_aun64_))
+    channel_aun64_ read;
+        CH_PAD_(7, CH_CACHE_LINE_ - sizeof(channel_aun64_))
+    char buf[]; // channel_cell_<T> buf[];
 } channel_buf_;
 
 /* Unbuffered channels currently only use the fields in the shared header. */
 typedef struct channel_hdr_ channel_unbuf_;
 
-typedef union channel {
+union channel {
     channel_hdr_ hdr;
     channel_buf_ buf;
     channel_unbuf_ unbuf;
-} channel;
+};
 
 typedef struct channel_case_ {
     channel *c;
@@ -245,11 +258,11 @@ typedef struct channel_case_ {
     channel_op op;
 } channel_case_;
 
-typedef struct channel_set {
+struct channel_set {
     uint32_t len, cap;
     channel_case_ *arr;
     sem_t sem;
-} channel_set;
+};
 
 #define ch_load_rlx_(obj) atomic_load_explicit(obj, memory_order_relaxed)
 #define ch_load_acq_(obj) atomic_load_explicit(obj, memory_order_acquire)
@@ -523,7 +536,8 @@ channel_unbuf_trysend_(channel_unbuf_ *c, void *elt) {
  * on unbuffered channels if there is no waiting receiver. Returns `CH_OK` on
  * success, `CH_FULL` on failure, or `CH_CLOSED` if the channel is closed. */
 inline int
-channel_trysend(channel *c, void *elt) {
+channel_trysend(channel *c, void *elt, size_t eltsize) {
+    ch_assert_(eltsize == c->hdr.eltsize);
     if (c->hdr.cap > 0) {
         return channel_buf_trysend_(&c->buf, elt);
     }
@@ -602,7 +616,8 @@ channel_unbuf_tryrecv_(channel_unbuf_ *c, void *elt) {
  * on success, `CH_EMPTY` on failure, or `CH_CLOSED` if the channel is closed.
  */
 inline int
-channel_tryrecv(channel *c, void *elt) {
+channel_tryrecv(channel *c, void *elt, size_t eltsize) {
+    ch_assert_(eltsize == c->hdr.eltsize);
     if (c->hdr.cap > 0) {
         return channel_buf_tryrecv_(&c->buf, elt);
     }
@@ -651,16 +666,15 @@ channel_buf_forceres_cell_(channel_buf_ *c, char **cell, uint32_t *lap) {
  *
  * XXX Not well tested. */
 inline int
-channel_forcesend(channel *c_, void *elt) {
-    ch_assert_(c_->hdr.cap > 0);
-    channel_buf_ *c = &c_->buf;
+channel_forcesend(channel *c, void *elt, size_t eltsize) {
+    ch_assert_(eltsize == c->hdr.eltsize && c->hdr.cap > 0);
     char *cell;
     uint32_t lap;
-    int rc = channel_buf_forceres_cell_(c, &cell, &lap);
+    int rc = channel_buf_forceres_cell_(&c->buf, &cell, &lap);
     if (rc != CH_CLOSED) {
-        memcpy(ch_cell_elt_(cell), elt, c->eltsize);
+        memcpy(ch_cell_elt_(cell), elt, c->buf.eltsize);
         ch_store_seq_cst_(ch_cell_lap_(cell), lap + 1);
-        channel_buf_recvq_add_(c);
+        channel_buf_recvq_add_(&c->buf);
     }
     return rc;
 }
@@ -742,7 +756,8 @@ channel_unbuf_send_(channel_unbuf_ *c, void *elt) {
  * unbuffered channels if there is no waiting receiver. Returns `CH_OK` on
  * success or `CH_CLOSED` if the channel is closed. */
 inline int
-channel_send(channel *c, void *elt) {
+channel_send(channel *c, void *elt, size_t eltsize) {
+    ch_assert_(eltsize == c->hdr.eltsize);
     if (c->hdr.cap > 0) {
         return channel_buf_send_(&c->buf, elt);
     }
@@ -829,7 +844,8 @@ channel_unbuf_recv_(channel_unbuf_ *c, void *elt) {
  * block on unbuffered channels if there is no waiting sender. Returns `CH_OK`
  * on success or `CH_CLOSED` if the channel is closed. */
 inline int
-channel_recv(channel *c, void *elt) {
+channel_recv(channel *c, void *elt, size_t eltsize) {
+    ch_assert_(eltsize == c->hdr.eltsize);
     if (c->hdr.cap > 0) {
         return channel_buf_recv_(&c->buf, elt);
     }
@@ -860,12 +876,20 @@ channel_set_drop(channel_set *s) {
 /* Adds a channel to the channel set and registers the specified operation and
  * element. */
 inline uint32_t
-channel_set_add(channel_set *s, channel *c, channel_op op, void *elt) {
+channel_set_add(
+    channel_set *s,
+    channel *c,
+    channel_op op,
+    void *elt,
+    size_t eltsize
+) {
     if (s->len == s->cap) {
         ch_assert_((
             s->arr = realloc(s->arr, (s->cap *= 2) * sizeof(s->arr[0]))));
     }
-    ch_assert_(s->len < CH_SEL_NIL_ - 1); // Assert s->len < RAND_MAX maybe?
+    ch_assert_(eltsize == c->hdr.eltsize &&
+            s->len < CH_SEL_NIL_ &&
+            s->len < RAND_MAX);
     s->arr[s->len] = (channel_case_){c, &s->sem, elt, NULL, op};
     return s->len++;
 }
@@ -873,7 +897,14 @@ channel_set_add(channel_set *s, channel *c, channel_op op, void *elt) {
 /* Change the registered op or element of the specified channel in the channel
  * set. */
 inline void
-channel_set_rereg(channel_set *s, uint32_t id, channel_op op, void *elt) {
+channel_set_rereg(
+    channel_set *s,
+    uint32_t id,
+    channel_op op,
+    void *elt,
+    size_t eltsize
+) {
+    ch_assert_(eltsize == s->arr[id].c->hdr.eltsize);
     s->arr[id].op = op;
     s->arr[id].elt = elt;
 }
@@ -890,9 +921,9 @@ channel_select_test_all_(
 
         int rc;
         if (cc.op == CH_SEND) {
-            rc = channel_trysend(cc.c, cc.elt);
+            rc = channel_trysend(cc.c, cc.elt, cc.c->hdr.eltsize);
         } else {
-            rc = channel_tryrecv(cc.c, cc.elt);
+            rc = channel_tryrecv(cc.c, cc.elt, cc.c->hdr.eltsize);
         }
         if (rc == CH_OK) {
             *selrc = (i + offset) % s->len;
@@ -939,7 +970,6 @@ channel_select_ready_or_wait_(
         void *elt = cc->c->hdr.cap > 0 ? NULL : cc->elt;
         channel_waiter_ *_Atomic *waitq = cc->op == CH_SEND ?
                 &cc->c->hdr.sendq : &cc->c->hdr.recvq;
-        assert(cc->waiter == NULL);
         pthread_mutex_lock(&cc->c->hdr.lock);
         cc->waiter = channel_waitq_push_(
             waitq, &s->sem, state, (i + offset) % s->len, elt);
@@ -1015,18 +1045,19 @@ channel_select(channel_set *s) {
     }
 }
 
-/* ch_poll is an alternative to ch_select. It continually loops over the cases
- * (`op` is intended to be either ch_trysend or ch_tryrecv) rather than
- * blocking, which may be preferable in cases where one of the operations is
- * expected to succeed or if there is a default case. Burns a lot of cycles
+/* ch_poll is an alternative to ch_select. It continuously loops over the cases
+ * (`fn` is intended to be either ch_trysend or ch_tryrecv) rather than
+ * blocking, which may be preferable in cases where one of the functions is
+ * expected to succeed or if there is a default case but burns a lot of cycles
  * otherwise. */
 #define ch_poll(casec) if (1) { \
+    bool Xdone_ = false; \
     switch (rand() % casec) { \
-    for (bool Xdone_ = false; ; Xdone_ = true)
+    for ( ; ; Xdone_ = true)
 
-#define ch_case(id, op, ...) \
+#define ch_case(id, fn, ...) \
     case id: \
-        if (op == CH_OK) { \
+        if (fn == CH_OK) { \
             __VA_ARGS__; \
             break; \
         } else (void)0

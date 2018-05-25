@@ -5,9 +5,8 @@
 #include "../channel.h"
 
 CHANNEL_EXTERN_DECL;
-typedef struct fn { // Unfortunately required until I do a GNU11 version
-    void (*ptr)(void);
-} fn;
+
+typedef void (*fn)(void);
 
 #define THREADC 128
 
@@ -17,7 +16,7 @@ work(void *arg) {
     fn f;
 
     while (ch_recv(c, f) == CH_OK) {
-        f.ptr();
+        f();
     }
     return NULL;
 }

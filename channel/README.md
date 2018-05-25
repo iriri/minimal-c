@@ -3,8 +3,7 @@ This library implements Go-style channels—MPMC blocking bounded queues with
 support for multiplexing. Changes have been made from Go's channel design to
 improve the multi-producer use case and reduce reliance on `select`. Buffered
 channels (queues with capacity of at least 1) are lock-free in the fast path.
-Currently requires C11 for `stdatomic.h`. I plan on doing a GNU11 version
-sometime that will support sending function pointers and literals.
+C11 support is required for `stdatomic.h`.
 
 TODO: Send, receive, and select with timeouts.
 
@@ -37,12 +36,17 @@ enum channel_op {
 ```
 
 ### Functions
-#### ch_make
+#### ch_make / ch_drop
 ```
 channel *ch_make(type T, uint32_t cap)
+
+channel *ch_drop(channel *c)
 ```
-Allocates a new channel. If the capacity is 0 then the channel is unbuffered.
-Otherwise the channel is buffered. Returns NULL.
+`ch_make` allocates and initializes a new channel. If the capacity is 0 then
+the channel is unbuffered. Otherwise the channel is buffered.
+
+`ch_drop` deallocates all resources associated with the channel and returns
+`NULL`.
 
 #### ch_dup
 ```
@@ -60,84 +64,67 @@ Decreases the reference count otherwise. Attempting to send on a closed channel
 immediately returns an error code. Receiving on a closed channel succeeds until
 the channel is emptied.
 
-#### ch_drop
-```
-channel *ch_drop(channel *c)
-```
-Deallocates all resources associated with the channel.
-
-#### ch_send
+#### ch_send / ch_recv
 ```
 int ch_send(channel *c, T elt)
-```
-Blocking sends block on buffered channels if the buffer is full and block on
-unbuffered channels if there is no waiting receiver. Returns `CH_OK` on success
-or `CH_CLOSED` if the channel is closed.
 
-#### ch_trysend
+int ch_recv(channel *c, T elt)
+```
+Blocking sends and receives block on buffered channels if the buffer is full or
+empty, respectively, and block on unbuffered channels if there is no waiting
+receiver or sender, respectively. Both return `CH_OK` on success or `CH_CLOSED`
+if the channel is closed.
+
+#### ch_trysend / ch_tryrecv
 ```
 int ch_trysend(channel *c, T elt)
+
+int ch_tryrecv(channel *c, T elt)
 ```
-Nonblocking sends fail on buffered channels if the channel is full and fail on
-unbuffered channels if there is no waiting receiver. Returns `CH_OK` on
-success, `CH_FULL` on failure, or `CH_CLOSED` if the channel is closed.
+Nonblocking sends and receives fail on buffered channels if the channel is full
+or empty, respectively, and fail on unbuffered channels if there is no waiting
+receiver or sender, respectively. Both return `CH_OK` on success or `CH_CLOSED`
+if the channel is closed. `ch_trysend` and `ch_tryrecv` respectively return
+`CH_FULL` and `CH_EMPTY` on failure.
 
 #### ch_forcesend
 ```
 int ch_forcesend(channel *c_, T elt)
 ```
-Forced sends on buffered channels do not block and overwrite the oldest message
-if the buffer is full. Forced sends are not possible with unbuffered channels.
-Returns `CH_OK` on success or `CH_CLOSED` if the channel is closed.
+Forced sends on buffered channels do not block and instead overwrite the oldest
+message if the buffer is full. Forced sends are not possible with unbuffered
+channels. Returns `CH_OK` on success or `CH_CLOSED` if the channel is closed.
 
 Not well tested.
 
-#### ch_recv
-```
-int ch_recv(channel *c, T elt)
-```
-Blocking receives block on buffered channels if the buffer is empty and
-block on unbuffered channels if there is no waiting sender. Returns `CH_OK`
-on success or `CH_CLOSED` if the channel is closed.
-
-#### ch_tryrecv
-```
-int ch_tryrecv(channel *c, T elt)
-```
-Nonblocking receives fail on buffered channels if the channel is empty and fail
-on unbuffered channels if there is no waiting sender. Returns `CH_OK` on
-success, `CH_EMPTY` on failure, or `CH_CLOSED` if the channel is closed.
-
-#### ch_set_make
+#### ch_set_make / ch_set_drop
 ```
 ch_set *ch_set_make(uint32_t cap)
-```
-Allocates a new channel set. The cap is not a hard limit but a realloc must be
-done every time it must grow past the current capacity.
 
-#### ch_set_drop
+ch_set *ch_set_drop(ch_set *s)
 ```
-ch_set *ch_set_drop(ch_set *s) {
-```
-Deallocates all resources associated with the channel set. Returns NULL.
+`ch_set_make` allocates and initializes a new channel set for use with
+`ch_select`. `cap` is not a hard limit but a realloc must be done every time
+the set grows past the current capacity.
 
-#### ch_set_add
+`ch_set_drop` deallocates all resources associated with the channel set and
+returns NULL.
+
+#### ch_set_add / ch_set_rereg
 ```
 uint32_t ch_set_add(ch_set *s, channel *c, ch_op op, T elt)
-```
-Adds a channel to the channel set and registers the specified operation and
-element.
 
-#### ch_set_rereg
-```
 void ch_set_rereg(ch_set *s, uint32_t id, ch_op op, T elt)
 ```
-Change the registered op or element of the specified channel in the channel
-set.
+`ch_set_add` adds a channel to the channel set and registers the specified
+operation and element.
+
+`ch_set_rereg` changes the operation and/or element registered to the specified
+channel in the channel set.
 
 #### ch_select
 ```
-inline uint32_t ch_select(channel_set *s)
+uint32_t ch_select(channel_set *s)
 ```
 Randomly performs the registered operation on one channel in the channel set
 that is ready to perform that operation. Blocks if no channel is ready.
@@ -146,3 +133,29 @@ Returns the id of the channel successfully completes its operation or
 `CH_NOOP`.
 
 Not well tested.
+
+#### ch_poll / ch_case / ch_default / ch_poll_end
+```
+ch_poll(int casec)
+
+ch_case(int id, int (*fn)(channel *, T), { block })
+
+ch_default({ block })
+
+ch_poll_end
+```
+ch_poll is an alternative to ch_select. It continuously loops over the cases
+(`fn` is intended to be either ch_trysend or ch_tryrecv) rather than blocking,
+which may be preferable in cases where one of the operations is expected to
+succeed or if there is a default case but burns a lot of cycles otherwise. See
+`tests/basic.c` for an example.
+
+### Notes
+This library reserves the following "namespaces": `channel_`, `ch_`, and `CH_`.
+
+Cache line padding is disabled by default. It can be enabled by defining
+`CH_PAD_CACHE_LINES`.
+
+The `ch_send` family of functions does not support sending literals. I may
+write a separate version sometime using GNU extensions that will support this
+in addition to providing more type safety.
