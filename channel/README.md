@@ -1,9 +1,9 @@
 ## channel.h
 This library implements Go-style channels—MPMC blocking bounded queues with
 support for multiplexing. Changes have been made from Go's channel design to
-improve the multi-producer use case and reduce reliance on `select`. Buffered
-channels (queues with capacity of at least 1) are lock-free in the fast path.
-C11 support is required for `stdatomic.h`.
+improve the multi-producer use case and reduce reliance on `select`. The
+buffered channel fast path is lock-free. C11 support is required for
+`stdatomic.h`.
 
 TODO: Send, receive, and select with timeouts.
 
@@ -104,11 +104,11 @@ ch_set *ch_set_make(uint32_t cap)
 ch_set *ch_set_drop(ch_set *s)
 ```
 `ch_set_make` allocates and initializes a new channel set for use with
-`ch_select`. `cap` is not a hard limit but a realloc must be done every time
-the set grows past the current capacity.
+`ch_select`. `cap` is not a hard limit but a `realloc` must be done every time
+it grows past the current capacity.
 
 `ch_set_drop` deallocates all resources associated with the channel set and
-returns NULL.
+returns `NULL`.
 
 #### ch_set_add / ch_set_rereg
 ```
@@ -144,18 +144,17 @@ ch_default({ block })
 
 ch_poll_end
 ```
-ch_poll is an alternative to ch_select. It continuously loops over the cases
-(`fn` is intended to be either ch_trysend or ch_tryrecv) rather than blocking,
-which may be preferable in cases where one of the operations is expected to
-succeed or if there is a default case but burns a lot of cycles otherwise. See
-`tests/basic.c` for an example.
+ch_poll is an alternative to `ch_select`. It continuously loops over the cases
+(`fn` is intended to be either `ch_trysend` or `ch_tryrecv`) rather than
+blocking, which may be preferable in cases where one of the operations is
+expected to succeed or if there is a default case but burns a lot of cycles
+otherwise. See `tests/basic.c` for an example.
 
 ### Notes
-This library reserves the following "namespaces": `channel_`, `ch_`, and `CH_`.
+This library reserves the "namespaces" `channel_`, `ch_`, and `CH_`.
 
 Cache line padding is disabled by default. It can be enabled by defining
 `CH_PAD_CACHE_LINES`.
 
-The `ch_send` family of functions does not support sending literals. I may
-write a separate version sometime using GNU extensions that will support this
-in addition to providing more type safety.
+The `ch_send` family of functions does not support sending literals. This may
+be supported in the future by a separate version that uses GNU extensions.

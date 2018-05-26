@@ -1,7 +1,7 @@
 # minimal
 Bad single header libraries.
 
-#### Goals
+### Goals
 Simplicity - Libraries should be one header, require minimal boilerplate, and
 store values, not references. Interfaces should be concise. User simplicity
 should be favored over both implementation simplicity and performance.
@@ -15,8 +15,11 @@ compile cleanly with `-Wall -Wextra -Wpedantic -O2` (for reasonable values of
 sanitizers. The "strict-aliasing" rule should not be violated.
 
 ## channel.h
-This library implements Go-style channels—MPMC blocking bounded queues with
-support for multiplexing. See `channel/README.md` for more information.
+Go-style channels—MPMC blocking bounded queues with support for multiplexing.
+The buffered channel fast path is lock-free. See `channel/README.md` for
+documentation.
 
 ## vector.h
-Exactly what it looks like.
+Basic array-based vectors that also support stack operations. Both GNU99 and
+C99 versions are available. See `vector/README.md` for an overview of the
+differences.

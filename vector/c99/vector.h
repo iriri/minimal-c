@@ -10,9 +10,12 @@
 #include <unistd.h>
 
 /* ------------------------------- Interface ------------------------------- */
+#define VECTOR_H_VERSION 0l // 0.0.0
+
 typedef struct vector vector;
 
 #define vec_make(T, len, cap) vector_make(sizeof(T), len, cap)
+#define vec_shrink(v) vector_shrink(v)
 #define vec_drop(v) vector_drop(v)
 
 #define vec_arr(v, T) ((T *)v->arr)
@@ -20,8 +23,16 @@ typedef struct vector vector;
 #define vec_index(v, T, index) (*(T *)vector_index(v, sizeof(T), index))
 
 #define vec_push(v, T, elt) ((void)(*(T *)vector_push(v, sizeof(T)) = elt))
+#define vec_peek(v, T, elt) \
+    ( \
+        vec_assert_(sizeof(T) == sizeof(elt)), \
+        vector_peek(v, sizeof(T), &elt, false) \
+    )
 #define vec_pop(v, T, elt) \
-    (vec_assert_(sizeof(T) == sizeof(elt)), vector_pop(v, sizeof(elt), &elt))
+    ( \
+        vec_assert_(sizeof(T) == sizeof(elt)), \
+        vector_peek(v, sizeof(T), &elt, true) \
+    )
 
 #define vec_concat(v, v1) vector_concat(v, v1)
 #define vec_find(v, elt) vector_find(v, sizeof(elt), &elt)
@@ -32,10 +43,11 @@ typedef struct vector vector;
     extern inline void vector_assert_( \
         const char *, unsigned, const char *) __attribute__((noreturn)); \
     extern inline vector *vector_make(size_t, size_t, size_t); \
+    extern inline void vector_shrink(vector *); \
     extern inline vector *vector_drop(vector *); \
     extern inline void *vector_index(vector *, size_t, size_t); \
     extern inline void *vector_push(vector *, size_t); \
-    extern inline bool vector_pop(vector *, size_t, void *); \
+    extern inline bool vector_peek(vector *, size_t, void *, bool); \
     extern inline void vector_concat(vector *, vector *); \
     extern inline ssize_t vector_find(vector *, size_t, void *); \
     extern inline void vector_remove(vector *, ssize_t)
@@ -46,7 +58,7 @@ struct vector {
     size_t eltsize, len, cap;
 };
 
-/* vec_assert_ never becomes a noop, even when NDEBUG is set. */
+/* `vec_assert_` never becomes a noop, even when `NDEBUG` is set. */
 #define vec_assert_(pred) \
     (__builtin_expect(!(pred), 0) ? \
         vector_assert_(__FILE__, __LINE__, #pred) : (void)0)
@@ -64,6 +76,15 @@ vector_make(size_t eltsize, size_t len, size_t cap) {
     *v = (vector){malloc(cap * eltsize), eltsize, len, cap};
     vec_assert_(v->arr);
     return v;
+}
+
+inline void
+vector_shrink(vector *v) {
+    if (v->len * 4 > v->cap) {
+        return;
+    }
+    vec_assert_((v->arr = realloc(
+        v->arr, (v->cap = 2 * v->len) * v->eltsize)));
 }
 
 inline vector *
@@ -89,12 +110,12 @@ vector_push(vector *v, size_t eltsize) {
 }
 
 inline bool
-vector_pop(vector *v, size_t eltsize, void *elt) {
+vector_peek(vector *v, size_t eltsize, void *elt, bool pop) {
     vec_assert_(eltsize == v->eltsize);
     if (v->len == 0) {
         return false;
     }
-    memcpy(elt, v->arr + (--v->len * eltsize), eltsize);
+    memcpy(elt, v->arr + ((pop ? --v->len : v->len - 1) * eltsize), eltsize);
     return true;
 }
 

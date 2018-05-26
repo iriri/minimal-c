@@ -129,7 +129,7 @@ typedef enum channel_op {
     extern inline void channel_select_remove_waiters_(channel_set *); \
     extern inline uint32_t channel_select(channel_set *)
 
-/* CH_PAD_CACHE_LINES is left undefined by default as cache line padding
+/* `CH_PAD_CACHE_LINES` is left undefined by default as cache line padding
  * doesn't seem to make a difference in my tests. Feel free to define it if
  * your testing shows that it helps. */
 #ifdef CH_PAD_CACHE_LINES
@@ -284,7 +284,7 @@ struct channel_set {
     atomic_compare_exchange_strong_explicit( \
         obj, exp, des, memory_order_seq_cst, memory_order_relaxed)
 
-/* ch_assert_ never becomes a noop, even when NDEBUG is set. */
+/* `ch_assert_` never becomes a noop, even when `NDEBUG` is set. */
 #define ch_assert_(pred) \
     (__builtin_expect(!(pred), 0) ? \
         channel_assert_(__FILE__, __LINE__, #pred) : (void)0)
@@ -295,8 +295,8 @@ channel_assert_(const char *file, unsigned line, const char *pred) {
     abort();
 }
 
-/* Allocates a new channel. If the capacity is 0 then the channel is
- * unbuffered. Otherwise the channel is buffered. Returns NULL. */
+/* Allocates and initializes a new channel. If the capacity is 0 then the
+ * channel is unbuffered. Otherwise the channel is buffered. */
 inline channel *
 channel_make(size_t eltsize, uint32_t cap) {
     channel *c;
@@ -428,7 +428,7 @@ channel_close(channel *c) {
     pthread_mutex_unlock(&c->hdr.lock);
 }
 
-/* Deallocates all resources associated with the channel. */
+/* Deallocates all resources associated with the channel and returns `NULL`. */
 inline channel *
 channel_drop(channel *c) {
     ch_assert_(pthread_mutex_destroy(&c->hdr.lock) == 0);
@@ -852,8 +852,8 @@ channel_recv(channel *c, void *elt, size_t eltsize) {
     return channel_unbuf_recv_(&c->unbuf, elt);
 }
 
-/* Allocates a new channel set. The cap is not a hard limit but a realloc must
- * be done every time it must grow past the current capacity. */
+/* Allocates and initializes a new channel set. `cap` is not a hard limit but a
+ * `realloc` must be done every time it grows past the current capacity. */
 inline channel_set *
 channel_set_make(uint32_t cap) {
     channel_set *s = malloc(sizeof(*s));
@@ -864,7 +864,8 @@ channel_set_make(uint32_t cap) {
     return s;
 }
 
-/* Deallocates all resources associated with the channel set. Returns NULL. */
+/* Deallocates all resources associated with the channel set and returns
+ * `NULL`. */
 inline channel_set *
 channel_set_drop(channel_set *s) {
     sem_destroy(&s->sem);
@@ -1045,11 +1046,11 @@ channel_select(channel_set *s) {
     }
 }
 
-/* ch_poll is an alternative to ch_select. It continuously loops over the cases
- * (`fn` is intended to be either ch_trysend or ch_tryrecv) rather than
- * blocking, which may be preferable in cases where one of the functions is
- * expected to succeed or if there is a default case but burns a lot of cycles
- * otherwise. */
+/* `ch_poll` is an alternative to `ch_select`. It continuously loops over the
+ * cases (`fn` is intended to be either `ch_trysend` or `ch_tryrecv`) rather
+ * than blocking, which may be preferable in cases where one of the functions
+ * is expected to succeed or if there is a default case but burns a lot of
+ * cycles otherwise. */
 #define ch_poll(casec) if (1) { \
     bool Xdone_ = false; \
     switch (rand() % casec) { \

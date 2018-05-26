@@ -10,22 +10,9 @@
 #include <unistd.h>
 
 /* ------------------------------- Interface ------------------------------- */
+#define VECTOR_H_VERSION 0l // 0.0.0
+
 #define vector(T) vector_##T##_
-
-#define vec_make(T, len, cap) vector_make(sizeof(T), len, cap)
-#define vec_drop(v) vector_drop(&v->hdr)
-
-#define vec_arr(v) (v->vec.arr)
-#define vec_len(v) (v->vec.len)
-#define vec_index(v, index) (*vec_index_(v, index, __COUNTER__))
-
-#define vec_push(v, elt) vec_push_(v, elt, __COUNTER__)
-#define vec_pop(v, elt) vec_pop_(v, elt, __COUNTER__)
-
-#define vec_concat(v, v1) vector_concat(&v->hdr, &v1->hdr)
-#define vec_find(v, elt) vec_find_(v, elt, __COUNTER__)
-#define vec_remove(v, index) vector_remove(&v->hdr, index)
-
 #ifndef MINIMAL_
 #define ptr(T) T##ptr_
 #endif
@@ -35,26 +22,48 @@
         vector_hdr_ hdr; \
         struct { \
             T *arr; \
-            size_t eltsize, len, cap; \
+            size_t len, cap; \
         } vec; \
     } vector(T)
 #define VECTOR_DEF_PTR(T) \
     typedef T * ptr(T); \
     VECTOR_DEF(ptr(T))
 
+#define vec_make(T, len, cap) ((vector(T) *)vector_make(sizeof(T), len, cap))
+#define vec_shrink(v) vector_shrink(&v->hdr, sizeof(*v->vec.arr))
+#define vec_drop(v) vector_drop(&v->hdr)
+
+#define vec_arr(v) (v->vec.arr)
+#define vec_len(v) (v->vec.len)
+#define vec_index(v, index) (*vec_index_(v, index, __COUNTER__))
+
+#define vec_push(v, elt) vec_push_(v, elt, __COUNTER__)
+#define vec_peek(v, elt) vec_peek_(v, elt, __COUNTER__)
+#define vec_pop(v, elt) vec_pop_(v, elt, __COUNTER__)
+
+#define vec_concat(v, v1) \
+    do { \
+        (void)sizeof((v = v1)); \
+        vector_concat(&v->hdr, &v1->hdr, sizeof(*v->vec.arr)); \
+    } while (0)
+#define vec_find(v, elt) vec_find_(v, elt, __COUNTER__)
+#define vec_remove(v, index) vector_remove(&v->hdr, index, sizeof(*v->vec.arr))
+
 /* These declarations must be present in exactly one compilation unit. */
 #define VECTOR_EXTERN_DECL \
     extern inline void vector_assert_( \
         const char *, unsigned, const char *) __attribute__((noreturn)); \
     extern inline void *vector_make(size_t, size_t, size_t); \
+    extern inline void vector_shrink(vector_hdr_ *, size_t); \
     extern inline void *vector_drop(vector_hdr_ *); \
-    extern inline void vector_concat(vector_hdr_ *, vector_hdr_ *); \
-    extern inline void vector_remove(vector_hdr_ *, ssize_t)
+    extern inline void vector_grow_(vector_hdr_ *, size_t); \
+    extern inline void vector_concat(vector_hdr_ *, vector_hdr_ *, size_t); \
+    extern inline void vector_remove(vector_hdr_ *, ssize_t, size_t)
 
 /* ---------------------------- Implementation ---------------------------- */
 typedef struct vector_hdr_ {
     char *arr;
-    size_t eltsize, len, cap;
+    size_t len, cap;
 } vector_hdr_;
 
 /* Almost hygenic... */
@@ -71,15 +80,24 @@ typedef struct vector_hdr_ {
 
 #define vec_push_(v, elt, id) \
     do { \
-        __extension__ __auto_type vec_sym_(v, id) = &v->vec; \
-        if (vec_sym_(v, id)->len == vec_sym_(v, id)->cap) { \
-            vec_assert_((vec_sym_(v, id)->arr = realloc( \
-                vec_sym_(v, id)->arr, \
-                (vec_sym_(v, id)->cap *= 2) * \
-                        sizeof(*vec_sym_(v, id)->arr)))); \
-        } \
-        vec_sym_(v, id)->arr[vec_sym_(v, id)->len++] = elt; \
+        __extension__ __auto_type vec_sym_(v, id) = v; \
+        vector_grow_(&vec_sym_(v, id)->hdr, sizeof(*v->vec.arr)); \
+        vec_sym_(v, id)->vec.arr[vec_sym_(v, id)->vec.len++] = elt; \
     } while (0)
+
+#define vec_peek_(v, elt, id) \
+    __extension__ ({ \
+        __label__ ret; \
+        bool vec_sym_(rc, id) = true; \
+        __auto_type vec_sym_(v, id) = &v->vec; \
+        if (vec_sym_(v, id)->len == 0) { \
+            vec_sym_(rc, id) = false; \
+            goto ret; \
+        } \
+        elt = vec_sym_(v, id)->arr[vec_sym_(v, id)->len - 1]; \
+ret: \
+        vec_sym_(rc, id); \
+    })
 
 #define vec_pop_(v, elt, id) \
     __extension__ ({ \
@@ -110,7 +128,7 @@ ret: \
         vec_sym_(rc, id); \
     })
 
-/* vec_assert_ never becomes a noop, even when NDEBUG is set. */
+/* `vec_assert_` never becomes a noop, even when `NDEBUG` is set. */
 #define vec_assert_(pred) \
     (__builtin_expect(!(pred), 0) ? \
         vector_assert_(__FILE__, __LINE__, #pred) : (void)0)
@@ -125,9 +143,17 @@ inline void *
 vector_make(size_t eltsize, size_t len, size_t cap) {
     vector_hdr_ *v = malloc(sizeof(*v));
     vec_assert_(cap > 0 && len <= cap && v);
-    *v = (vector_hdr_){malloc(cap * eltsize), eltsize, len, cap};
+    *v = (vector_hdr_){malloc(cap * eltsize), len, cap};
     vec_assert_(v->arr);
     return v;
+}
+
+inline void
+vector_shrink(vector_hdr_ *v, size_t eltsize) {
+    if (v->len * 4 > v->cap) {
+        return;
+    }
+    vec_assert_((v->arr = realloc(v->arr, (v->cap = 2 * v->len) * eltsize)));
 }
 
 inline void *
@@ -138,19 +164,26 @@ vector_drop(vector_hdr_ *v) {
 }
 
 inline void
-vector_concat(vector_hdr_ *v, vector_hdr_ *v1) {
-    vec_assert_(v->eltsize == v1->eltsize);
+vector_grow_(vector_hdr_ *v, size_t eltsize) {
+    if (v->len < v->cap) {
+        return;
+    }
+    vec_assert_((v->arr = realloc(v->arr, (v->cap *= 2) * eltsize)));
+}
+
+inline void
+vector_concat(vector_hdr_ *v, vector_hdr_ *v1, size_t eltsize) {
     if (v->len + v1->len > v->cap) {
         vec_assert_((v->arr = realloc(
             v->arr,
-            v->eltsize * (v->cap += v->cap > v1->cap ? v->cap : v1->cap))));
+            (v->cap += v->cap > v1->cap ? v->cap : v1->cap) * eltsize)));
     }
-    memmove(v->arr + (v->len * v->eltsize), v1->arr, v1->len * v1->eltsize);
+    memmove(v->arr + (v->len * eltsize), v1->arr, v1->len * eltsize);
     v->len += v1->len;
 }
 
 inline void
-vector_remove(vector_hdr_ *v, ssize_t index) {
+vector_remove(vector_hdr_ *v, ssize_t index, size_t eltsize) {
     size_t i = index;
     if (index < 0) {
         return;
@@ -159,9 +192,9 @@ vector_remove(vector_hdr_ *v, ssize_t index) {
     vec_assert_(i <= v->len);
     if (i != v->len) {
         memmove(
-            v->arr + (i * v->eltsize),
-            v->arr + ((i + 1) * v->eltsize),
-            (v->len - i) * v->eltsize);
+            v->arr + (i * eltsize),
+            v->arr + ((i + 1) * eltsize),
+            (v->len - i) * eltsize);
     }
 }
 #endif

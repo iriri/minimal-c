@@ -43,6 +43,8 @@ main() {
     assert(v->vec.cap == 8);
     int via[] = {1, 2, 3, 4, 5};
     verify(v, via, 5);
+    assert(vec_peek(v, a));
+    assert(a == 5);
 
     vec_remove(v, 4);
     int via1[] = {1, 2, 3, 4};
@@ -52,6 +54,8 @@ main() {
     verify(v, via2, 3);
     a = 1;
     vec_remove(v, vec_find(v, a));
+    vec_shrink(v);
+    assert(v->vec.cap == 4);
     int via3[] = {2, 4};
     verify(v, via3, 2);
     vec_index(v, 0) = 1;
