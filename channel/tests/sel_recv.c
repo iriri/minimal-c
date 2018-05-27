@@ -1,6 +1,7 @@
 #include <assert.h>
-#include <stdio.h>
 #include <pthread.h>
+#include <stdio.h>
+#include <time.h>
 #include "../channel.h"
 
 CHANNEL_EXTERN_DECL;
@@ -22,6 +23,8 @@ identity(void *arg) {
 
 int
 main() {
+    srand(time(NULL));
+
     channel *chanpool[THREADC];
     pthread_t pool[THREADC];
     channel *chanp = ch_make(channel *, 0);

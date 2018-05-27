@@ -7,13 +7,18 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <unistd.h>
 
 /* ------------------------------- Interface ------------------------------- */
 #define VECTOR_H_VERSION 0l // 0.0.0
+#define VECTOR_H_GNU
 
+/* Each individual vector type must be defined before use. Pointer types must
+ * be wrapped with `ptr` instead of using `*` as type names are created via
+ * token pasting. E.g. `VEC_DEF_PTR(int);` defines the type of vectors of
+ * pointers to integers and `vector(ptr(int)) v;` declares one such vector. */
 #define vector(T) vector_##T##_
 #ifndef MINIMAL_
+#define MINIMAL_
 #define ptr(T) T##ptr_
 #endif
 
@@ -29,6 +34,7 @@
     typedef T * ptr(T); \
     VECTOR_DEF(ptr(T))
 
+/* Exported "functions" */
 #define vec_make(T, len, cap) ((vector(T) *)vector_make(sizeof(T), len, cap))
 #define vec_shrink(v) vector_shrink(&v->hdr, sizeof(*v->vec.arr))
 #define vec_drop(v) vector_drop(&v->hdr)
@@ -41,6 +47,7 @@
 #define vec_peek(v, elt) vec_peek_(v, elt, __COUNTER__)
 #define vec_pop(v, elt) vec_pop_(v, elt, __COUNTER__)
 
+/* The `sizeof` is a type check; `v = v1` doesn't actually get evaluated. */
 #define vec_concat(v, v1) \
     do { \
         (void)sizeof((v = v1)); \
@@ -58,7 +65,7 @@
     extern inline void *vector_drop(vector_hdr_ *); \
     extern inline void vector_grow_(vector_hdr_ *, size_t); \
     extern inline void vector_concat(vector_hdr_ *, vector_hdr_ *, size_t); \
-    extern inline void vector_remove(vector_hdr_ *, ssize_t, size_t)
+    extern inline void vector_remove(vector_hdr_ *, size_t, size_t)
 
 /* ---------------------------- Implementation ---------------------------- */
 typedef struct vector_hdr_ {
@@ -74,8 +81,10 @@ typedef struct vector_hdr_ {
 #define vec_index_(v, index, id) \
     __extension__ ({ \
         __auto_type vec_sym_(v, id) = &v->vec; \
-        vec_assert_(index < vec_sym_(v, id)->len); \
-        vec_sym_(v, id)->arr + index; \
+        __auto_type vec_sym_(index, id) = index; \
+        vec_assert_( \
+            vec_sym_(index, id) < (typeof(index))vec_sym_(v, id)->len); \
+        vec_sym_(v, id)->arr + vec_sym_(index, id); \
     })
 
 #define vec_push_(v, elt, id) \
@@ -102,8 +111,8 @@ ret: \
 #define vec_pop_(v, elt, id) \
     __extension__ ({ \
         __label__ ret; \
-        bool vec_sym_(rc, id) = true; \
         __auto_type vec_sym_(v, id) = &v->vec; \
+        bool vec_sym_(rc, id) = true; \
         if (vec_sym_(v, id)->len == 0) { \
             vec_sym_(rc, id) = false; \
             goto ret; \
@@ -116,16 +125,17 @@ ret: \
 #define vec_find_(v, elt, id) \
     __extension__ ({ \
         __label__ ret; \
-        bool vec_sym_(rc, id) = false; \
         __auto_type vec_sym_(v, id) = &v->vec; \
+        __auto_type vec_sym_(elt, id) = elt; \
+        size_t vec_sym_(index, id) = SIZE_MAX; \
         for (size_t i = 0; i < vec_sym_(v, id)->len; i++) { \
-            if (vec_sym_(v, id)->arr[i] == elt) { \
-                vec_sym_(rc, id) = i; \
+            if (vec_sym_(v, id)->arr[i] == vec_sym_(elt, id)) { \
+                vec_sym_(index, id) = i; \
                 goto ret; \
             } \
         } \
 ret: \
-        vec_sym_(rc, id); \
+        vec_sym_(index, id); \
     })
 
 /* `vec_assert_` never becomes a noop, even when `NDEBUG` is set. */
@@ -183,18 +193,17 @@ vector_concat(vector_hdr_ *v, vector_hdr_ *v1, size_t eltsize) {
 }
 
 inline void
-vector_remove(vector_hdr_ *v, ssize_t index, size_t eltsize) {
-    size_t i = index;
-    if (index < 0) {
+vector_remove(vector_hdr_ *v, size_t index, size_t eltsize) {
+    if (index == SIZE_MAX) {
         return;
     }
     v->len--;
-    vec_assert_(i <= v->len);
-    if (i != v->len) {
+    vec_assert_(index <= v->len);
+    if (index != v->len) {
         memmove(
-            v->arr + (i * eltsize),
-            v->arr + ((i + 1) * eltsize),
-            (v->len - i) * eltsize);
+            v->arr + (index * eltsize),
+            v->arr + ((index + 1) * eltsize),
+            (v->len - index) * eltsize);
     }
 }
 #endif

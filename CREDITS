@@ -1,5 +1,11 @@
 channel.h
-    The semantics of this library were inspired by the Go programming language.
+    The semantics of this library are inspired by channels from the Go
+    programming language.
 
-    The implementations of sending, receiving, and selection were inspired by
+    The implementations of sending, receiving, and selection are based on
     algorithms described in "Go channels on steroids" by Dmitry Vyukov.
+
+minmax.h
+    This library is an implementation of the data structure described in
+    "Min-Max Heaps and Generalized Priority Queues" by M.D. Atkinson, J.-R.
+    Sack, N. Santoro, and T. Strothott.

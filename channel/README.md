@@ -151,10 +151,11 @@ expected to succeed or if there is a default case but burns a lot of cycles
 otherwise. See `tests/basic.c` for an example.
 
 ### Notes
-This library reserves the "namespaces" `channel_`, `ch_`, and `CH_`.
+This library reserves the "namespaces" `ch_`, `channel_`, `CH_`, and
+`CHANNEL_`.
 
 Cache line padding is disabled by default. It can be enabled by defining
-`CH_PAD_CACHE_LINES`.
+`CHANNEL_PAD_CACHE_LINES`.
 
 The `ch_send` family of functions does not support sending literals. This may
 be supported in the future by a separate version that uses GNU extensions.

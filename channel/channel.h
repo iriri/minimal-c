@@ -2,9 +2,10 @@
  * Copyright 2018 iriri. All rights reserved. Use of this source code is
  * governed by a BSD-style license which can be found in the LICENSE file.
  *
- * The semantics of this library were inspired by the Go programming language.
+ * The semantics of this library are inspired by channels from the Go
+ * programming language.
  *
- * The implementations of sending, receiving, and selection were inspired by
+ * The implementations of sending, receiving, and selection are based on
  * algorithms described in "Go channels on steroids" by Dmitry Vyukov. */
 #ifndef CHANNEL_H
 #define CHANNEL_H
@@ -27,7 +28,7 @@
 
 /* Assumptions */
 #if ATOMIC_LLONG_LOCK_FREE != 2
-#error "Not sure if this works if _Atomic uint64_t isn't lock-free."
+#error "Not sure if this works if `_Atomic uint64_t` isn't lock-free."
 #elif !defined(__BYTE_ORDER__) || (__BYTE_ORDER__ != __ORDER_LITTLE_ENDIAN__)
 #error "The changes for big endian are trivial but I need a box to test on."
 #endif
@@ -129,10 +130,10 @@ typedef enum channel_op {
     extern inline void channel_select_remove_waiters_(channel_set *); \
     extern inline uint32_t channel_select(channel_set *)
 
-/* `CH_PAD_CACHE_LINES` is left undefined by default as cache line padding
+/* `CHANNEL_PAD_CACHE_LINES` is left undefined by default as cache line padding
  * doesn't seem to make a difference in my tests. Feel free to define it if
  * your testing shows that it helps. */
-#ifdef CH_PAD_CACHE_LINES
+#ifdef CHANNEL_PAD_CACHE_LINES
 #define CH_CACHE_LINE_ 128
 #define CH_PAD_(id, size) char pad##id[size];
 #else
@@ -173,6 +174,9 @@ typedef union channel_un64_ {
 #define sem_destroy(sem) dispatch_release(*(sem))
 #endif
 
+/* TODO Consider replacing the wait queues with ring buffers. Linked lists were
+ * chosen because constant-time removal regardless of position is, in theory,
+ * nice for timeouts but ring buffers are much more performant in general. */
 typedef struct channel_waiter_hdr_ {
     union channel_waiter_ *prev, *next;
     sem_t *sem;
@@ -544,6 +548,7 @@ channel_trysend(channel *c, void *elt, size_t eltsize) {
     return channel_unbuf_trysend_(&c->unbuf, elt);
 }
 
+/* TODO Break up like `ch_buf_trysend` in preparation for GNU11 version? */
 inline int
 channel_buf_tryrecv_(channel_buf_ *c, void *elt) {
     for (int i = 0; ; ) {

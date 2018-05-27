@@ -7,13 +7,14 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <unistd.h>
 
 /* ------------------------------- Interface ------------------------------- */
 #define VECTOR_H_VERSION 0l // 0.0.0
+#define VECTOR_H_STD
 
 typedef struct vector vector;
 
+/* Exported "functions" */
 #define vec_make(T, len, cap) vector_make(sizeof(T), len, cap)
 #define vec_shrink(v) vector_shrink(v)
 #define vec_drop(v) vector_drop(v)
@@ -23,6 +24,10 @@ typedef struct vector vector;
 #define vec_index(v, T, index) (*(T *)vector_index(v, sizeof(T), index))
 
 #define vec_push(v, T, elt) ((void)(*(T *)vector_push(v, sizeof(T)) = elt))
+
+/* TODO Is there a way to do this "type check" at compile-time? `static_assert`
+ * is a statement, not an expression, so it can't be used with the comma
+ * operator. Is this weak of a "type check" even worth doing? */
 #define vec_peek(v, T, elt) \
     ( \
         vec_assert_(sizeof(T) == sizeof(elt)), \
@@ -49,8 +54,8 @@ typedef struct vector vector;
     extern inline void *vector_push(vector *, size_t); \
     extern inline bool vector_peek(vector *, size_t, void *, bool); \
     extern inline void vector_concat(vector *, vector *); \
-    extern inline ssize_t vector_find(vector *, size_t, void *); \
-    extern inline void vector_remove(vector *, ssize_t)
+    extern inline size_t vector_find(vector *, size_t, void *); \
+    extern inline void vector_remove(vector *, size_t)
 
 /* ---------------------------- Implementation ---------------------------- */
 struct vector {
@@ -125,36 +130,35 @@ vector_concat(vector *v, vector *v1) {
     if (v->len + v1->len > v->cap) {
         vec_assert_((v->arr = realloc(
             v->arr,
-            v1->eltsize * (v->cap += (v->cap > v1->cap ? v->cap : v1->cap)))));
+            (v->cap += v->cap > v1->cap ? v->cap : v1->cap) * v1->eltsize)));
     }
     memmove(v->arr + (v->len * v->eltsize), v1->arr, v1->len * v1->eltsize);
     v->len += v1->len;
 }
 
-inline ssize_t
+inline size_t
 vector_find(vector *v, size_t eltsize, void *elt) {
     vec_assert_(eltsize == v->eltsize);
     for (size_t i = 0; i < v->len; i++) {
-        if (memcmp(v->arr + (i * v->eltsize), elt, v->eltsize) == 0) {
+        if (memcmp(v->arr + (i * eltsize), elt, eltsize) == 0) {
             return i;
         }
     }
-    return -1;
+    return SIZE_MAX;
 }
 
 inline void
-vector_remove(vector *v, ssize_t index) {
-    size_t i = index;
-    if (index < 0) {
+vector_remove(vector *v, size_t index) {
+    if (index == SIZE_MAX) {
         return;
     }
     v->len--;
-    vec_assert_(i <= v->len);
-    if (i != v->len) {
+    vec_assert_(index <= v->len);
+    if (index != v->len) {
         memmove(
-            v->arr + (i * v->eltsize),
-            v->arr + ((i + 1) * v->eltsize),
-            (v->len - i) * v->eltsize);
+            v->arr + (index * v->eltsize),
+            v->arr + ((index + 1) * v->eltsize),
+            (v->len - index) * v->eltsize);
     }
 }
 #endif

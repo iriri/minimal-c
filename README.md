@@ -19,7 +19,11 @@ Go-style channels—MPMC blocking bounded queues with support for multiplexing.
 The buffered channel fast path is lock-free. See `channel/README.md` for
 documentation.
 
+## minmax.h
+Heap based double-ended priority queue. Not really done and not really tested
+much.
+
 ## vector.h
 Basic array-based vectors that also support stack operations. Both GNU99 and
-C99 versions are available. See `vector/README.md` for an overview of the
-differences.
+C99 versions are available. Not really tested at all yet tbh. See
+`vector/README.md` for an overview of the differences.
