@@ -39,12 +39,9 @@ main() {
     for (int i = -999; i < 1000; i++) {
         mm_insert(m, int, i);
     }
-    /* TODO Support duplicates--bubble-up works but trickle-down doesn't. */
-    /*
     for (int i = -999; i < 1000; i++) {
         mm_insert(m, int, i);
     }
-    */
     verify_int_heap(m);
     int a;
     assert(mm_peekmin(m, int, a));
@@ -64,15 +61,12 @@ main() {
         mm_insert(m, int, rand());
     }
     verify_int_heap(m);
-    /* TODO Support duplicates */
-    /*
     b = INT_MAX;
     while (mm_pollmax(m, int, a)) {
         // verify_int_heap(m);
         assert(a <= b);
         b = a;
     }
-    */
     m = mm_drop(m);
 
     printf("All tests passed\n");
