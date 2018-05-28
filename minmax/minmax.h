@@ -9,6 +9,7 @@
 #define MINMAX_H
 #include <math.h> // `tgmath.h` causes warnings in clang...
 #include <stdbool.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
