@@ -41,7 +41,7 @@ main() {
         ch_set_add(set, chanpool[i], CH_SEND, ia[i]);
     }
     for (int i = 1; i <= 100; i++) {
-        ch_select(set);
+        ch_select(set, 0);
     }
     set = ch_set_drop(set);
     for (int i = 0; i < THREADC; i++) {

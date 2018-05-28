@@ -184,6 +184,7 @@ minmax_bubble_up_max_(minmax *m, size_t index, size_t eltsize) {
     }
 }
 
+/* TODO Combine bubble up min and max. */
 inline void
 minmax_bubble_up_(minmax *m, size_t index, size_t eltsize) {
     size_t pindex;
@@ -331,6 +332,7 @@ minmax_trickle_down_max_(minmax *m, size_t index, size_t eltsize) {
     }
 }
 
+/* TODO Combine trickle down min and max. */
 inline void
 minmax_trickle_down_(minmax *m, size_t index, size_t eltsize) {
     if (minmax_level_type_max_(index)) {

@@ -38,7 +38,7 @@ main() {
         ch_set_add(set, chanpool[i], CH_RECV, ir);
     }
     for (int i = 1; i <= 100; i++) {
-        int id = ch_select(set);
+        int id = ch_select(set, 0);
         printf("%d, %d\n", id, ir);
         assert(ir == id);
     }

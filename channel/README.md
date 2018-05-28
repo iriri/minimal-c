@@ -5,8 +5,6 @@ improve the multi-producer use case and reduce reliance on `select`. The
 buffered channel fast path is lock-free. C11 support is required for
 `stdatomic.h`.
 
-TODO: Send, receive, and select with timeouts.
-
 ### Types
 ```
 typedef union channel channel;
@@ -87,6 +85,22 @@ receiver or sender, respectively. Both return `CH_OK` on success or `CH_CLOSED`
 if the channel is closed. `ch_trysend` and `ch_tryrecv` respectively return
 `CH_FULL` and `CH_EMPTY` on failure.
 
+#### ch_timedsend / ch_timedrecv
+```
+int ch_timedsend(channel *c, T elt, uint64_t timeout)
+
+int ch_timedrecv(channel *c, T elt, uint64_t timeout)
+```
+Timed sends and receives fail on buffered channels if the channel is full or
+empty, respectively, for the duration of the timeout, and fail on unbuffered
+channels if there is no waiting receiver or sender, respectively, for the
+duration of the timeout. `timeout` is specified in milliseconds. Both return
+`CH_OK` on success or `CH_CLOSED` if the channel is closed.  `ch_timedsend` and
+`ch_timedrecv` respectively return `CH_FULL | CH_TIMEDOUT` and `CH_EMPTY |
+CH_TIMEDOUT` on failure.
+
+Completely untested.
+
 #### ch_forcesend
 ```
 int ch_forcesend(channel *c_, T elt)
@@ -95,7 +109,7 @@ Forced sends on buffered channels do not block and instead overwrite the oldest
 message if the buffer is full. Forced sends are not possible with unbuffered
 channels. Returns `CH_OK` on success or `CH_CLOSED` if the channel is closed.
 
-Not well tested.
+Completely untested.
 
 #### ch_set_make / ch_set_drop
 ```
@@ -124,15 +138,17 @@ channel in the channel set.
 
 #### ch_select
 ```
-uint32_t ch_select(channel_set *s)
+uint32_t ch_select(channel_set *s, uint64_t timeout)
 ```
 Randomly performs the registered operation on one channel in the channel set
-that is ready to perform that operation. Blocks if no channel is ready.
-Returns the id of the channel successfully completes its operation or
+that is ready to perform that operation. Blocks if no channel is ready. A
+timeout in milliseconds may be optionally specified, or `0` for no timeout.
+Returns the id of the channel successfully completes its operation,
 `CH_SEL_CLOSED` if all channels are closed or have been registered with
-`CH_NOOP`.
+`CH_NOOP`, or `CH_SEL_TIMEDOUT` if no operation successfully completes before
+the timeout.
 
-Not well tested.
+Completely untested.
 
 #### ch_poll / ch_case / ch_default / ch_poll_end
 ```
