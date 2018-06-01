@@ -103,7 +103,7 @@ typedef enum channel_op {
         channel_waiter_ *_Atomic *); \
     extern inline void channel_close(channel *); \
     extern inline channel *channel_drop(channel *); \
-    extern inline int channel_buf_res_cell_( \
+    extern inline int channel_buf_trysend_res_cell_( \
         channel_buf_ *, char **, uint32_t *); \
     extern inline void channel_buf_waitq_shift_( \
         channel_waiter_ *_Atomic *, pthread_mutex_t *); \
@@ -112,10 +112,12 @@ typedef enum channel_op {
         channel_unbuf_ *, channel_waiter_unbuf_ **); \
     extern inline int channel_unbuf_trysend_(channel_unbuf_ *, void *); \
     extern inline int channel_trysend(channel *, void *, size_t); \
+    extern inline int channel_buf_tryrecv_res_cell_( \
+        channel_buf_ *, char **, uint32_t *); \
     extern inline int channel_buf_tryrecv_(channel_buf_ *, void *); \
     extern inline int channel_unbuf_tryrecv_(channel_unbuf_ *, void *); \
     extern inline int channel_tryrecv(channel *, void *, size_t); \
-    extern inline int channel_buf_forceres_cell_( \
+    extern inline int channel_buf_forcesend_res_cell_( \
         channel_buf_ *, char **, uint32_t *); \
     extern inline int channel_forcesend(channel *, void *, size_t); \
     extern inline int channel_buf_send_or_add_waiter_( \
@@ -149,8 +151,7 @@ typedef enum channel_op {
         channel_set *, channel *, channel_op, void *, size_t); \
     extern inline void channel_set_rereg( \
         channel_set *, uint32_t, channel_op, void *, size_t); \
-    extern inline bool channel_select_test_all_( \
-        channel_set *, uint32_t *, uint32_t); \
+    extern inline uint32_t channel_select_test_all_(channel_set *, uint32_t); \
     extern inline bool channel_select_ready_(channel *, channel_op); \
     extern inline channel_select_rc_ channel_select_ready_or_wait_( \
         channel_set *, _Atomic uint32_t *, uint32_t); \
@@ -158,11 +159,10 @@ typedef enum channel_op {
         channel_set *, uint32_t); \
     extern inline uint32_t channel_select(channel_set *, uint64_t)
 
-/* `CHANNEL_PAD_CACHE_LINES` is left undefined by default as cache line padding
- * doesn't seem to make a difference in my tests. Feel free to define it if
- * your testing shows that it helps. */
+/* `CHANNEL_PAD_CACHE_LINES` can be defined to enable cache line padding,
+ * improving performance in highly parallel workloads. */
 #ifdef CHANNEL_PAD_CACHE_LINES
-#define CH_CACHE_LINE_ 128
+#define CH_CACHE_LINE_ 64
 #define CH_PAD_(id, size) char pad##id[size];
 #else
 #define CH_PAD_(id, size)
@@ -276,15 +276,9 @@ typedef union channel_waiter_ {
 
 typedef struct channel_hdr_ {
     uint32_t cap;
-        CH_PAD_(0, CH_CACHE_LINE_ - sizeof(uint32_t))
     _Atomic uint32_t refc;
-        CH_PAD_(1, CH_CACHE_LINE_ - sizeof(_Atomic uint32_t))
     size_t eltsize;
-        CH_PAD_(2, CH_CACHE_LINE_ - sizeof(size_t))
-    channel_waiter_ *_Atomic sendq;
-        CH_PAD_(3, CH_CACHE_LINE_ - sizeof(channel_waiter_ *_Atomic))
-    channel_waiter_ *_Atomic recvq;
-        CH_PAD_(4, CH_CACHE_LINE_ - sizeof(channel_waiter_ *_Atomic))
+    channel_waiter_ *_Atomic sendq, *_Atomic recvq;
     pthread_mutex_t lock;
 } channel_hdr_;
 
@@ -299,21 +293,14 @@ typedef struct channel_hdr_ {
 
 typedef struct channel_buf_ {
     uint32_t cap;
-        CH_PAD_(0, CH_CACHE_LINE_ - sizeof(uint32_t))
     _Atomic uint32_t refc;
-        CH_PAD_(1, CH_CACHE_LINE_ - sizeof(_Atomic uint32_t))
     size_t eltsize;
-        CH_PAD_(2, CH_CACHE_LINE_ - sizeof(size_t))
-    channel_waiter_ *_Atomic sendq;
-        CH_PAD_(3, CH_CACHE_LINE_ - sizeof(channel_waiter_ *_Atomic))
-    channel_waiter_ *_Atomic recvq;
-        CH_PAD_(4, CH_CACHE_LINE_ - sizeof(channel_waiter_ *_Atomic))
+    channel_waiter_ *_Atomic sendq, *_Atomic recvq;
     pthread_mutex_t lock;
-        CH_PAD_(5, CH_CACHE_LINE_ - (sizeof(pthread_mutex_t) % CH_CACHE_LINE_))
     channel_aun64_ write;
-        CH_PAD_(6, CH_CACHE_LINE_ - sizeof(channel_aun64_))
+        CH_PAD_(0, CH_CACHE_LINE_ - sizeof(channel_aun64_))
     channel_aun64_ read;
-        CH_PAD_(7, CH_CACHE_LINE_ - sizeof(channel_aun64_))
+        CH_PAD_(1, CH_CACHE_LINE_ - sizeof(channel_aun64_))
     char buf[]; // channel_cell_<T> buf[];
 } channel_buf_;
 
@@ -477,24 +464,20 @@ channel_close(channel *c) {
 
     pthread_mutex_lock(&c->hdr.lock);
     if (c->hdr.cap > 0) {
-        while (ch_load_acq_(&c->buf.sendq)) {
-            channel_waiter_buf_ *w = &channel_waitq_shift_(&c->buf.sendq)->buf;
+        channel_waiter_buf_ *w;
+        while ((w = &channel_waitq_shift_(&c->buf.sendq)->buf)) {
             ch_sem_post_(w->sem);
         }
-        while (ch_load_acq_(&c->buf.recvq)) {
-            channel_waiter_buf_ *w = &channel_waitq_shift_(&c->buf.recvq)->buf;
+        while ((w = &channel_waitq_shift_(&c->buf.recvq)->buf)) {
             ch_sem_post_(w->sem);
         }
     } else {
-        while (ch_load_acq_(&c->unbuf.sendq)) {
-            channel_waiter_unbuf_ *w = &channel_waitq_shift_(
-                &c->unbuf.sendq)->unbuf;
+        channel_waiter_unbuf_ *w;
+        while ((w = &channel_waitq_shift_(&c->unbuf.sendq)->unbuf)) {
             w->closed = true;
             ch_sem_post_(w->sem);
         }
-        while (ch_load_acq_(&c->unbuf.recvq)) {
-            channel_waiter_unbuf_ *w = &channel_waitq_shift_(
-                &c->unbuf.recvq)->unbuf;
+        while ((w = &channel_waitq_shift_(&c->unbuf.recvq)->unbuf)) {
             w->closed = true;
             ch_sem_post_(w->sem);
         }
@@ -511,7 +494,7 @@ channel_drop(channel *c) {
 }
 
 inline int
-channel_buf_res_cell_(channel_buf_ *c, char **cell, uint32_t *lap) {
+channel_buf_trysend_res_cell_(channel_buf_ *c, char **cell, uint32_t *lap) {
     for (int i = 0; ; ) {
         if (ch_load_acq_(&c->refc) == 0) {
             return CH_CLOSED;
@@ -564,7 +547,7 @@ inline int
 channel_buf_trysend_(channel_buf_ *c, void *elt) {
     char *cell;
     uint32_t lap;
-    int rc = channel_buf_res_cell_(c, &cell, &lap);
+    int rc = channel_buf_trysend_res_cell_(c, &cell, &lap);
     if (rc != CH_OK) {
         return rc;
     }
@@ -631,14 +614,13 @@ channel_trysend(channel *c, void *elt, size_t eltsize) {
     return channel_unbuf_trysend_(&c->unbuf, elt);
 }
 
-/* TODO Break up like `ch_buf_trysend` in preparation for GNU11 version? */
 inline int
-channel_buf_tryrecv_(channel_buf_ *c, void *elt) {
+channel_buf_tryrecv_res_cell_(channel_buf_ *c, char **cell, uint32_t *lap) {
     for (int i = 0; ; ) {
         channel_un64_ read = {ch_load_acq_(&c->read.u64)};
-        char *cell = c->buf + (read.u32.index * ch_cellsize_(c->eltsize));
-        uint32_t lap = ch_load_acq_(ch_cell_lap_(cell));
-        if (read.u32.lap != lap) {
+        *cell = c->buf + (read.u32.index * ch_cellsize_(c->eltsize));
+        *lap = ch_load_acq_(ch_cell_lap_(*cell));
+        if (read.u32.lap != *lap) {
             if (ch_load_acq_(&c->refc) == 0) {
                 return CH_CLOSED;
             }
@@ -652,12 +634,24 @@ channel_buf_tryrecv_(channel_buf_ *c, void *elt) {
         uint64_t read1 = read.u32.index + 1 < c->cap ?
                 read.u64 + 1 : (uint64_t)(read.u32.lap + 2) << 32;
         if (ch_cas_weak_(&c->read.u64, &read.u64, read1)) {
-            memcpy(elt, ch_cell_elt_(cell), c->eltsize);
-            ch_store_seq_cst_(ch_cell_lap_(cell), lap + 1);
-            channel_buf_waitq_shift_(&c->sendq, &c->lock);
             return CH_OK;
         }
     }
+}
+
+inline int
+channel_buf_tryrecv_(channel_buf_ *c, void *elt) {
+    char *cell;
+    uint32_t lap;
+    int rc = channel_buf_tryrecv_res_cell_(c, &cell, &lap);
+    if (rc != CH_OK) {
+        return rc;
+    }
+
+    memcpy(elt, ch_cell_elt_(cell), c->eltsize);
+    ch_store_seq_cst_(ch_cell_lap_(cell), lap + 1);
+    channel_buf_waitq_shift_(&c->sendq, &c->lock);
+    return CH_OK;
 }
 
 inline int
@@ -707,7 +701,7 @@ channel_tryrecv(channel *c, void *elt, size_t eltsize) {
 }
 
 inline int
-channel_buf_forceres_cell_(channel_buf_ *c, char **cell, uint32_t *lap) {
+channel_buf_forcesend_res_cell_(channel_buf_ *c, char **cell, uint32_t *lap) {
     for (bool full = false; ; ) {
         if (ch_load_acq_(&c->refc) == 0) {
             return CH_CLOSED;
@@ -744,15 +738,13 @@ channel_buf_forceres_cell_(channel_buf_ *c, char **cell, uint32_t *lap) {
 /* Forced sends on buffered channels do not block and overwrite the oldest
  * message if the buffer is full. Forced sends are not possible with unbuffered
  * channels. Returns `CH_OK` on success or `CH_CLOSED` if the channel is
- * closed.
- *
- * XXX Not well tested. */
+ * closed. */
 inline int
 channel_forcesend(channel *c, void *elt, size_t eltsize) {
     ch_assert_(eltsize == c->hdr.eltsize && c->hdr.cap > 0);
     char *cell;
     uint32_t lap;
-    int rc = channel_buf_forceres_cell_(&c->buf, &cell, &lap);
+    int rc = channel_buf_forcesend_res_cell_(&c->buf, &cell, &lap);
     if (rc != CH_CLOSED) {
         memcpy(ch_cell_elt_(cell), elt, c->buf.eltsize);
         ch_store_seq_cst_(ch_cell_lap_(cell), lap + 1);
@@ -1066,9 +1058,7 @@ cleanup:
  * duration of the timeout and fail on unbuffered channels if there is no
  * waiting receiver for the duration of the timeout. Returns `CH_OK` on
  * success, `CH_FULL | CH_TIMEDOUT` on failure, or `CH_CLOSED` if the channel
- * is closed.
- *
- * XXX Completely untested. */
+ * is closed. */
 inline int
 channel_timedsend(channel *c, void *elt, uint64_t timeout, size_t eltsize) {
     ch_assert_(eltsize == c->hdr.eltsize);
@@ -1141,9 +1131,7 @@ cleanup:
  * duration of the timeout and fail on unbuffered channels if there is no
  * waiting sender for the duration of the timeout. Returns `CH_OK` on success,
  * `CH_EMPTY | CH_TIMEDOUT` on failure, or `CH_CLOSED` if the channel is
- * closed.
- *
- * XXX Completely untested. */
+ * closed. */
 inline int
 channel_timedrecv(channel *c, void *elt, uint64_t timeout, size_t eltsize) {
     ch_assert_(eltsize == c->hdr.eltsize);
@@ -1212,28 +1200,18 @@ channel_set_rereg(
     s->arr[id].elt = elt;
 }
 
-inline bool
-channel_select_test_all_(
-    channel_set *s, uint32_t *selrc, uint32_t offset
-) {
+inline uint32_t
+channel_select_test_all_(channel_set *s, uint32_t offset) {
     for (uint32_t i = 0; i < s->len; i++) {
         channel_case_ cc = s->arr[(i + offset) % s->len];
-        if (cc.op == CH_NOOP) {
-            continue;
-        }
-
-        int rc;
-        if (cc.op == CH_SEND) {
-            rc = channel_trysend(cc.c, cc.elt, cc.c->hdr.eltsize);
-        } else {
-            rc = channel_tryrecv(cc.c, cc.elt, cc.c->hdr.eltsize);
-        }
-        if (rc == CH_OK) {
-            *selrc = (i + offset) % s->len;
-            return true;
+        if ((cc.op == CH_SEND &&
+                channel_trysend(cc.c, cc.elt, cc.c->hdr.eltsize) == CH_OK) ||
+            (cc.op == CH_RECV &&
+                channel_tryrecv(cc.c, cc.elt, cc.c->hdr.eltsize) == CH_OK)) {
+            return (i + offset) % s->len;
         }
     }
-    return false;
+    return CH_SEL_NIL_;
 }
 
 inline bool
@@ -1320,9 +1298,7 @@ channel_select_remove_waiters_(channel_set *s, uint32_t state) {
  * that is ready to perform that operation. Blocks if no channel is ready.
  * Returns the id of the channel successfully completes its operation or
  * `CH_SEL_CLOSED` if all channels are closed or have been registered with
- * `CH_NOOP`.
- *
- * XXX Completely untested. */
+ * `CH_NOOP`. */
 inline uint32_t
 channel_select(channel_set *s, uint64_t timeout) {
     uint32_t offset = rand() % s->len;
@@ -1331,8 +1307,8 @@ channel_select(channel_set *s, uint64_t timeout) {
         t = channel_add_timeout_(timeout);
     }
     for ( ; ; ) {
-        uint32_t rc;
-        if (channel_select_test_all_(s, &rc, offset)) {
+        uint32_t rc = channel_select_test_all_(s, offset);
+        if (rc != CH_SEL_NIL_) {
             return rc;
         }
 
@@ -1357,13 +1333,12 @@ channel_select(channel_set *s, uint64_t timeout) {
                     if (state < CH_SEL_NIL_) {
                         ch_sem_wait_(&s->sem);
                     }
-                } else {
-                    ch_cas_strong_(&state, &magic, CH_SEL_NIL_);
+                    break;
                 }
             } else {
                 ch_sem_wait_(&s->sem);
-                ch_cas_strong_(&state, &magic, CH_SEL_NIL_);
             }
+            ch_cas_strong_(&state, &magic, CH_SEL_NIL_);
         }
 
         channel_select_remove_waiters_(s, magic);
@@ -1377,7 +1352,7 @@ channel_select(channel_set *s, uint64_t timeout) {
                 return state;
             }
         }
-        if (timedout) { // Some assumptions here (^:
+        if (timedout) {
             return CH_SEL_TIMEDOUT;
         }
     }

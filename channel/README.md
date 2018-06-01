@@ -99,7 +99,7 @@ duration of the timeout. `timeout` is specified in milliseconds. Both return
 `ch_timedrecv` respectively return `CH_FULL | CH_TIMEDOUT` and `CH_EMPTY |
 CH_TIMEDOUT` on failure.
 
-Completely untested.
+Not very well untested.
 
 #### ch_forcesend
 ```
@@ -109,7 +109,7 @@ Forced sends on buffered channels do not block and instead overwrite the oldest
 message if the buffer is full. Forced sends are not possible with unbuffered
 channels. Returns `CH_OK` on success or `CH_CLOSED` if the channel is closed.
 
-Completely untested.
+Not very well untested.
 
 #### ch_set_make / ch_set_drop
 ```
@@ -148,7 +148,7 @@ Returns the id of the channel successfully completes its operation,
 `CH_NOOP`, or `CH_SEL_TIMEDOUT` if no operation successfully completes before
 the timeout.
 
-Completely untested.
+Not very well untested.
 
 #### ch_poll / ch_case / ch_default / ch_poll_end
 ```
@@ -170,8 +170,8 @@ otherwise. See `tests/basic.c` for an example.
 This library reserves the "namespaces" `ch_`, `channel_`, `CH_`, and
 `CHANNEL_`.
 
-Cache line padding is disabled by default. It can be enabled by defining
-`CHANNEL_PAD_CACHE_LINES`.
+Cache line padding, which improves performance in highly parallel workloads, is
+disabled by default. It can be enabled by defining `CHANNEL_PAD_CACHE_LINES`.
 
 The `ch_send` family of functions does not support sending literals. This may
 be supported in the future by a separate version that uses GNU extensions.
