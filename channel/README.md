@@ -175,3 +175,6 @@ disabled by default. It can be enabled by defining `CHANNEL_PAD_CACHE_LINES`.
 
 The `ch_send` family of functions does not support sending literals. This may
 be supported in the future by a separate version that uses GNU extensions.
+
+Currently requires POSIX Threads due to lack of support for C11 threads on many
+(most?) platforms. Windows support may be added in the future.

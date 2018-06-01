@@ -52,8 +52,7 @@ main() {
     vec_remove(v, 2);
     int via2[] = {1, 2, 4};
     verify(v, via2, 3);
-    a = 1;
-    vec_remove(v, vec_find(v, a));
+    vec_remove(v, vec_find(v, 1));
     vec_shrink(v);
     assert(v->vec.cap == 4);
     int via3[] = {2, 4};

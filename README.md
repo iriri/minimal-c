@@ -15,9 +15,9 @@ compile cleanly with `-Wall -Wextra -Wpedantic -O2` (for reasonable values of
 sanitizers. The "strict-aliasing" rule should not be violated.
 
 ## channel.h
-Go-style channel—MPMC blocking bounded queue with support for multiplexing.
-The buffered channel fast path is lock-free. Some parts are more tested than
-others. See `channel/README.md` for documentation.
+Go-style channel, a.k.a. MPMC blocking bounded queue with support for
+multiplexing. The buffered channel fast path is lock-free. Kind of tested. See
+`channel/README.md` for documentation.
 
 ## minmax.h
 Min-max-heap-based double-ended priority queue. Not really done and not really
@@ -25,5 +25,5 @@ tested.
 
 ## vector.h
 Conventional array-based vector that also supports stack operations. Both GNU99
-and C99 versions are available. Not really tested tbh. See `vector/README.md`
+and C99 versions are available. Not really very tested. See `vector/README.md`
 for an overview of the differences.
