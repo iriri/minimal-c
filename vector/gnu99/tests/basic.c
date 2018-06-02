@@ -29,7 +29,7 @@ foo() {
 }
 
 int
-main() {
+main(void) {
     vector(int) *v = vec_make(int, 0, 2);
     int a = 1;
     vec_push(v, a);
@@ -80,4 +80,5 @@ main() {
         vec_arr(v2)[i]();
     }
     printf("All tests passed\n");
+    return 0;
 }

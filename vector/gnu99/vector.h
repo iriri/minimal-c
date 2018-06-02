@@ -4,6 +4,7 @@
 #ifndef VECTOR_H
 #define VECTOR_H
 #include <stdbool.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -14,7 +15,7 @@
 
 /* Each individual vector type must be defined before use. Pointer types must
  * be wrapped with `ptr` instead of using `*` as type names are created via
- * token pasting. E.g. `VEC_DEF_PTR(int);` defines the type of vectors of
+ * token pasting. E.g. `VECTOR_DEF_PTR(int);` defines the type of vectors of
  * pointers to integers and `vector(ptr(int)) v;` declares one such vector. */
 #define vector(T) vector_##T##_
 #ifndef MINIMAL_
@@ -31,16 +32,16 @@
         } vec; \
     } vector(T)
 #define VECTOR_DEF_PTR(T) \
-    typedef T * ptr(T); \
+    typedef T *ptr(T); \
     VECTOR_DEF(ptr(T))
 
 /* Exported "functions" */
 #define vec_make(T, len, cap) ((vector(T) *)vector_make(sizeof(T), len, cap))
-#define vec_shrink(v) vector_shrink(&v->hdr, sizeof(*v->vec.arr))
 #define vec_drop(v) vector_drop(&v->hdr)
+#define vec_shrink(v) vector_shrink(&v->hdr, sizeof(*v->vec.arr))
 
-#define vec_arr(v) (v->vec.arr)
 #define vec_len(v) (v->vec.len)
+#define vec_arr(v) (v->vec.arr)
 #define vec_index(v, index) (*vec_index_(v, index, __COUNTER__))
 
 #define vec_push(v, elt) vec_push_(v, elt, __COUNTER__)

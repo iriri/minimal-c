@@ -31,7 +31,7 @@ receiver(void *arg) {
 }
 
 int
-main() {
+main(void) {
     channel *chan = ch_make(int, 8);
     pthread_t senders[THREADC];
     pthread_t recvers[THREADC];
@@ -53,4 +53,5 @@ main() {
     printf("%lld\n", sum);
     assert(sum == ((LIM * (LIM + 1))/2) * THREADC);
     chan = ch_drop(chan);
+    return 0;
 }

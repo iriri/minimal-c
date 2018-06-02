@@ -19,7 +19,7 @@
 #include <unistd.h>
 #ifdef _POSIX_THREADS
 #include <pthread.h>
-#if _POSIX_SEMAPHORES >= 200112l && _POSIX_TIMEOUTS >= 200112l
+#if _POSIX_SEMAPHORES >= 200112l
 #include <errno.h>
 #include <semaphore.h>
 #include <time.h>
@@ -28,10 +28,8 @@
 #else
 #error "Semaphore implementation with timeout support missing."
 #endif
-#elif defined _WIN32
-#error "TODO Add Windows support"
 #else
-#error "Target does not support POSIX or WIN32 threads."
+#error "Target does not support POSIX threads."
 #endif
 
 /* Assumptions */
@@ -66,9 +64,9 @@ typedef enum channel_op {
 
 /* Exported "functions" */
 #define ch_make(T, cap) channel_make(sizeof(T), cap)
+#define ch_drop(c) channel_drop(c)
 #define ch_dup(c) channel_dup(c)
 #define ch_close(c) channel_close(c)
-#define ch_drop(c) channel_drop(c)
 
 #define ch_send(c, elt) channel_send(c, &(elt), sizeof(elt))
 #define ch_trysend(c, elt) channel_trysend(c, &(elt), sizeof(elt))
@@ -175,14 +173,13 @@ typedef enum channel_op {
 #endif
 
 /* ---------------------------- Implementation ---------------------------- */
-#ifdef _POSIX_THREADS // Linux and OS X (TODO Test on BSD)
+#ifdef _POSIX_THREADS // Linux, OS X, and Cygwin (and BSDs--untested, however)
 #define ch_mutex_ pthread_mutex_t
 #define ch_mutex_init_(m) (m) = (pthread_mutex_t)PTHREAD_MUTEX_INITIALIZER
 #define ch_mutex_destroy_(m) pthread_mutex_destroy(m)
 #define ch_mutex_lock_(m) pthread_mutex_lock(m)
 #define ch_mutex_unlock_(m) pthread_mutex_unlock(m)
-
-#if _POSIX_SEMAPHORES >= 200112l && _POSIX_TIMEOUTS >= 200112l // Linux
+#if _POSIX_SEMAPHORES >= 200112l // Linux and Cygwin (and BSDs?)
 #define ch_sem_ sem_t
 #define ch_sem_init_(sem, pshared, val) sem_init(sem, pshared, val)
 #define ch_sem_post_(sem) sem_post(sem)
@@ -219,8 +216,7 @@ channel_sem_timedwait_(sem_t *sem, const struct timespec *ts) {
     }
     return 0;
 }
-
-#elif defined __APPLE__ // OS X
+#elif defined __APPLE__ // OS X (and FreeBSD? Swap with previous case?)
 #define ch_sem_ dispatch_semaphore_t
 #define ch_sem_init_(sem, pshared, val) *(sem) = dispatch_semaphore_create(val)
 #define ch_sem_post_(sem) dispatch_semaphore_signal(*(sem))
@@ -232,22 +228,6 @@ channel_sem_timedwait_(sem_t *sem, const struct timespec *ts) {
 #define CHANNEL_SEM_WAIT_DECL_
 #define CHANNEL_SEM_TIMEDWAIT_DECL_
 #endif
-
-#elif defined _WIN32 // Windows (TODO Get a windows box)
-#define ch_mutex_
-#define ch_mutex_init_(m)
-#define ch_mutex_destroy_(m)
-#define ch_mutex_lock_(m)
-#define ch_mutex_unlock_(m)
-#define ch_sem_
-#define ch_sem_init_(sem, pshared, val)
-#define ch_sem_post_(sem)
-#define ch_sem_wait_(sem)
-#define ch_sem_timedwait_(sem, ts)
-#define ch_sem_destroy_(sem)
-#define ch_timespec_
-#define CHANNEL_SEM_WAIT_DECL_
-#define CHANNEL_SEM_TIMEDWAIT_DECL_
 #endif
 
 /* TODO Consider replacing the wait queues with ring buffers. Linked lists were

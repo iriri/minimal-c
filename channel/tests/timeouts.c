@@ -37,7 +37,7 @@ identity(void *arg) {
 }
 
 int
-main() {
+main(void) {
     srand(time(NULL));
 
     channel *chan = ch_make(int, 1);
@@ -99,4 +99,5 @@ main() {
     printf("\b\nok: %d timedout: %d\n", ok, timedout);
 
     printf("All tests passed\n");
+    return 0;
 }

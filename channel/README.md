@@ -1,9 +1,15 @@
 ## channel.h
-This library implements Go-style channels—MPMC blocking bounded queues with
-support for multiplexing. Changes have been made from Go's channel design to
-improve the multi-producer use case and reduce reliance on `select`. The
-buffered channel fast path is lock-free. C11 support is required for
-`stdatomic.h`.
+This library provides an implementation of a Go-style channel, a.k.a. MPMC
+blocking bounded queue with support for multiplexing. Changes have been made
+from Go's channel design to improve the multi-producer use case and reduce
+reliance on a `select`-style statement. The buffered channel fast path is
+lock-free.
+
+Support for POSIX threads, due to lack of widespread support for C11 threads,
+and either POSIX or libdispatch semaphores is required. Recent versions of
+Linux, OS X, and Cygwin have all been tested successfully. Support for C11 is
+required for `stdatomic.h` but if some other implementation of atomic variables
+is substituted in, C99 support should be good enough.
 
 ### Types
 ```
@@ -99,7 +105,7 @@ duration of the timeout. `timeout` is specified in milliseconds. Both return
 `ch_timedrecv` respectively return `CH_FULL | CH_TIMEDOUT` and `CH_EMPTY |
 CH_TIMEDOUT` on failure.
 
-Not very well untested.
+Not very well tested.
 
 #### ch_forcesend
 ```
@@ -109,7 +115,7 @@ Forced sends on buffered channels do not block and instead overwrite the oldest
 message if the buffer is full. Forced sends are not possible with unbuffered
 channels. Returns `CH_OK` on success or `CH_CLOSED` if the channel is closed.
 
-Not very well untested.
+Not very well tested.
 
 #### ch_set_make / ch_set_drop
 ```
@@ -148,7 +154,7 @@ Returns the id of the channel successfully completes its operation,
 `CH_NOOP`, or `CH_SEL_TIMEDOUT` if no operation successfully completes before
 the timeout.
 
-Not very well untested.
+Not very well tested.
 
 #### ch_poll / ch_case / ch_default / ch_poll_end
 ```
@@ -175,6 +181,3 @@ disabled by default. It can be enabled by defining `CHANNEL_PAD_CACHE_LINES`.
 
 The `ch_send` family of functions does not support sending literals. This may
 be supported in the future by a separate version that uses GNU extensions.
-
-Currently requires POSIX Threads due to lack of support for C11 threads on many
-(most?) platforms. Windows support may be added in the future.

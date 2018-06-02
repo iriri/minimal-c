@@ -7,7 +7,7 @@
  * Sack, N. Santoro, and T. Strothott. */
 #ifndef MINMAX_H
 #define MINMAX_H
-#include <math.h> // `tgmath.h` causes warnings in clang...
+#include <math.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -22,8 +22,10 @@ typedef int (*minmax_cmpfn)(void *restrict, void *restrict);
 
 /* Exported "functions" */
 #define mm_make(T, cap, cmpfn) minmax_make(sizeof(T), cap, cmpfn)
-#define mm_shrink(m) minmax_shrink(m)
 #define mm_drop(m) minmax_drop(m)
+#define mm_fromarr(T, len, cap, cmpfn, arr) \
+    minmax_fromarr(sizeof(T), len, cap, cmpfn, arr)
+#define mm_shrink(m) minmax_shrink(m)
 
 #define mm_len(m) (m->len)
 
@@ -55,8 +57,6 @@ typedef int (*minmax_cmpfn)(void *restrict, void *restrict);
         minmax_peekmax(m, sizeof(T), &elt, true) \
     )
 
-/* TODO fromvec, tovec, arbitrary remove? */
-
 /* These declarations must be present in exactly one compilation unit. */
 #define MINMAX_EXTERN_DECL \
     extern inline void minmax_assert_( \
@@ -68,6 +68,8 @@ typedef int (*minmax_cmpfn)(void *restrict, void *restrict);
     extern inline void *minmax_push_(minmax *, size_t); \
     extern inline size_t minmax_parent_(size_t); \
     extern inline bool minmax_level_type_max_(size_t); \
+    extern inline void minmax_swap_elts_( \
+        void *restrict, void *restrict, size_t); \
     extern inline void minmax_bubble_up_min_(minmax *, size_t, size_t); \
     extern inline void minmax_bubble_up_max_(minmax *, size_t, size_t); \
     extern inline void minmax_bubble_up_(minmax *, size_t, size_t); \
@@ -75,6 +77,8 @@ typedef int (*minmax_cmpfn)(void *restrict, void *restrict);
     extern inline void minmax_trickle_down_min_(minmax *, size_t, size_t); \
     extern inline void minmax_trickle_down_max_(minmax *, size_t, size_t); \
     extern inline void minmax_trickle_down_(minmax *, size_t, size_t); \
+    extern inline minmax *minmax_fromarr( \
+        size_t, size_t, size_t, minmax_cmpfn, void *); \
     extern inline bool minmax_peekmin(minmax *, size_t, void *, bool); \
     extern inline bool minmax_peekmax(minmax *, size_t, void *, bool)
 
@@ -108,6 +112,10 @@ minmax_assert_(const char *file, unsigned line, const char *pred) {
     abort();
 }
 
+/* Allocates and initializes a new min-max heap with the specified initial
+ * capacity. `cmpfn` should return a negative integer, zero, or a positive
+ * integer when the two elements are less than, equal to, or greater than each
+ * other, respectively. */
 inline minmax *
 minmax_make(size_t eltsize, size_t cap, minmax_cmpfn cmpfn) {
     minmax *m = malloc(sizeof(*m));
@@ -117,6 +125,9 @@ minmax_make(size_t eltsize, size_t cap, minmax_cmpfn cmpfn) {
     return m;
 }
 
+/* Shrinks the allocation of the heap to twice its length if it is currently
+ * more than 75% empty. Does nothing otherwise. This is the only way to shrink
+ * the allocation of the heap--it never shrinks itself automatically. */
 inline void
 minmax_shrink(minmax *m) {
     if (m->len * 4 > m->cap) {
@@ -126,6 +137,7 @@ minmax_shrink(minmax *m) {
         m->heap, (m->cap = 2 * m->len) * m->eltsize)));
 }
 
+/* Deallocates all resources associated with the heap and returns `NULL`. */
 inline minmax *
 minmax_drop(minmax *m) {
     free(m->heap);
@@ -156,16 +168,22 @@ minmax_level_type_max_(size_t index) {
 }
 
 inline void
+minmax_swap_elts_(void *restrict elt, void *restrict elt1, size_t eltsize) {
+    char tmp[eltsize]; // Time to blow the stack lmao
+    memcpy(tmp, elt, eltsize);
+    memcpy(elt, elt1, eltsize);
+    memcpy(elt1, tmp, eltsize);
+}
+
+inline void
 minmax_bubble_up_min_(minmax *m, size_t index, size_t eltsize) {
     size_t pindex;
-    char *elt, *parent, tmp[eltsize]; // Time to blow the stack lmao
+    char *elt, *parent;
     while ((pindex = minmax_parent_(minmax_parent_(index))) != SIZE_MAX &&
             m->cmpfn(
                 (elt = m->heap + (index * eltsize)),
                 (parent = m->heap + (pindex * eltsize))) < 0) {
-        memcpy(tmp, elt, eltsize);
-        memcpy(elt, parent, eltsize);
-        memcpy(parent, tmp, eltsize);
+        minmax_swap_elts_(elt, parent, eltsize);
         index = pindex;
     }
 }
@@ -173,19 +191,17 @@ minmax_bubble_up_min_(minmax *m, size_t index, size_t eltsize) {
 inline void
 minmax_bubble_up_max_(minmax *m, size_t index, size_t eltsize) {
     size_t pindex;
-    char *elt, *parent, tmp[eltsize];
+    char *elt, *parent;
     while ((pindex = minmax_parent_(minmax_parent_(index))) != SIZE_MAX &&
             m->cmpfn(
                 (elt = m->heap + (index * eltsize)),
                 (parent = m->heap + (pindex * eltsize))) > 0) {
-        memcpy(tmp, elt, eltsize);
-        memcpy(elt, parent, eltsize);
-        memcpy(parent, tmp, eltsize);
+        minmax_swap_elts_(elt, parent, eltsize);
         index = pindex;
     }
 }
 
-/* TODO Combine bubble up min and max. */
+/* Duplicating the min and max versions yields slightly better performance. */
 inline void
 minmax_bubble_up_(minmax *m, size_t index, size_t eltsize) {
     size_t pindex;
@@ -197,10 +213,7 @@ minmax_bubble_up_(minmax *m, size_t index, size_t eltsize) {
     char *parent = m->heap + (pindex * eltsize);
     if (minmax_level_type_max_(index)) {
         if (m->cmpfn(elt, parent) < 0) {
-            char tmp[eltsize];
-            memcpy(tmp, elt, eltsize);
-            memcpy(elt, parent, eltsize);
-            memcpy(parent, tmp, eltsize);
+            minmax_swap_elts_(elt, parent, eltsize);
             minmax_bubble_up_min_(m, pindex, eltsize);
             return;
         }
@@ -209,10 +222,7 @@ minmax_bubble_up_(minmax *m, size_t index, size_t eltsize) {
     }
 
     if (m->cmpfn(elt, parent) > 0) {
-        char tmp[eltsize];
-        memcpy(tmp, elt, eltsize);
-        memcpy(elt, parent, eltsize);
-        memcpy(parent, tmp, eltsize);
+        minmax_swap_elts_(elt, parent, eltsize);
         minmax_bubble_up_max_(m, pindex, eltsize);
         return;
     }
@@ -253,28 +263,21 @@ minmax_trickle_down_min_(minmax *m, size_t index, size_t eltsize) {
             }
         }
 
-        char tmp[eltsize];
         char *elt = m->heap + (index * eltsize);
         char *child = m->heap + (cindex * eltsize);
         if (cindex < gindex) {
             if (m->cmpfn(child, elt) < 0) {
-                memcpy(tmp, elt, eltsize);
-                memcpy(elt, child, eltsize);
-                memcpy(child, tmp, eltsize);
+                minmax_swap_elts_(child, elt, eltsize);
             }
             return;
         }
         if (m->cmpfn(child, elt) >= 0) {
             return;
         }
-        memcpy(tmp, elt, eltsize);
-        memcpy(elt, child, eltsize);
-        memcpy(child, tmp, eltsize);
+        minmax_swap_elts_(child, elt, eltsize);
         char *parent = m->heap + (minmax_parent_(cindex) * eltsize);
         if (m->cmpfn(child, parent) > 0) {
-            memcpy(tmp, child, eltsize);
-            memcpy(child, parent, eltsize);
-            memcpy(parent, tmp, eltsize);
+            minmax_swap_elts_(child, parent, eltsize);
         }
         index = cindex;
     }
@@ -306,34 +309,27 @@ minmax_trickle_down_max_(minmax *m, size_t index, size_t eltsize) {
             }
         }
 
-        char tmp[eltsize];
         char *elt = m->heap + (index * eltsize);
         char *child = m->heap + (cindex * eltsize);
         if (cindex < gindex) {
             if (m->cmpfn(child, elt) > 0) {
-                memcpy(tmp, elt, eltsize);
-                memcpy(elt, child, eltsize);
-                memcpy(child, tmp, eltsize);
+                minmax_swap_elts_(child, elt, eltsize);
             }
             return;
         }
         if (m->cmpfn(child, elt) <= 0) {
             return;
         }
-        memcpy(tmp, elt, eltsize);
-        memcpy(elt, child, eltsize);
-        memcpy(child, tmp, eltsize);
+        minmax_swap_elts_(child, elt, eltsize);
         char *parent = m->heap + (minmax_parent_(cindex) * eltsize);
         if (m->cmpfn(child, parent) < 0) {
-            memcpy(tmp, child, eltsize);
-            memcpy(child, parent, eltsize);
-            memcpy(parent, tmp, eltsize);
+            minmax_swap_elts_(child, parent, eltsize);
         }
         index = cindex;
     }
 }
 
-/* TODO Combine trickle down min and max. */
+/* Duplicating the min and max versions yields slightly better performance. */
 inline void
 minmax_trickle_down_(minmax *m, size_t index, size_t eltsize) {
     if (minmax_level_type_max_(index)) {
@@ -343,6 +339,23 @@ minmax_trickle_down_(minmax *m, size_t index, size_t eltsize) {
     minmax_trickle_down_min_(m, index, eltsize);
 }
 
+/* Heapifies and takes ownership of an existing array. `arr` *must* be
+ * dynamically allocated. */
+inline minmax *
+minmax_fromarr(
+    size_t eltsize, size_t len, size_t cap, minmax_cmpfn cmpfn, void *arr
+) {
+    minmax *m = malloc(sizeof(*m));
+    mm_assert_(cap > 0 && m);
+    *m = (minmax) {arr, eltsize, len, cap, cmpfn};
+    for (size_t i = len / 2; i != SIZE_MAX; i--) {
+        minmax_trickle_down_(m, i, eltsize);
+    }
+    return m;
+}
+
+/* Peeks at the minimum element in the heap or removes it instead if `poll` is
+ * `true`. */
 inline bool
 minmax_peekmin(minmax *m, size_t eltsize, void *elt, bool poll) {
     mm_assert_(eltsize == m->eltsize);
@@ -357,6 +370,8 @@ minmax_peekmin(minmax *m, size_t eltsize, void *elt, bool poll) {
     return true;
 }
 
+/* Peeks at the maximum element in the heap or removes it instead if `poll` is
+ * `true`. */
 inline bool
 minmax_peekmax(minmax *m, size_t eltsize, void *elt, bool poll) {
     mm_assert_(eltsize == m->eltsize);

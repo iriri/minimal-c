@@ -28,7 +28,7 @@ count(void) {
 }
 
 int
-main() {
+main(void) {
     pthread_t pool[THREADC];
     channel *work_queue = ch_make(fn, 16);
 
@@ -44,6 +44,5 @@ main() {
         pthread_join(pool[i], NULL);
     }
     ch_drop(work_queue);
-
     return 0;
 }

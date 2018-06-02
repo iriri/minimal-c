@@ -24,7 +24,7 @@ identity(void *arg) {
 }
 
 int
-main() {
+main(void) {
     srand(time(NULL));
 
     channel *chanpool[THREADC];
@@ -52,4 +52,5 @@ main() {
     chanp = ch_drop(chanp);
 
     printf("All tests passed\n");
+    return 0;
 }

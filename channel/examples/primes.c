@@ -34,7 +34,7 @@ filter(void *args) {
 }
 
 int
-main() {
+main(void) {
     channel *chan = ch_make(int, 0), *chan1;
     pthread_t gen, fltrpool[THREADC];
     pthread_create(&gen, NULL, generate, chan);
@@ -52,4 +52,5 @@ main() {
         pthread_create(fltrpool + i, NULL, filter, args);
         chan = chan1;
     }
+    return 0;
 }

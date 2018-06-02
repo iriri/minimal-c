@@ -4,6 +4,7 @@
 #ifndef VECTOR_H
 #define VECTOR_H
 #include <stdbool.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -16,11 +17,11 @@ typedef struct vector vector;
 
 /* Exported "functions" */
 #define vec_make(T, len, cap) vector_make(sizeof(T), len, cap)
-#define vec_shrink(v) vector_shrink(v)
 #define vec_drop(v) vector_drop(v)
+#define vec_shrink(v) vector_shrink(v)
 
-#define vec_arr(v, T) ((T *)v->arr)
 #define vec_len(v) (v->len)
+#define vec_arr(v, T) ((T *)v->arr)
 #define vec_index(v, T, index) (*(T *)vector_index(v, sizeof(T), index))
 
 #define vec_push(v, T, elt) ((void)(*(T *)vector_push(v, sizeof(T)) = elt))

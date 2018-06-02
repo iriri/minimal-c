@@ -34,7 +34,7 @@ identity(void *arg) {
 }
 
 int
-main() {
+main(void) {
     srand(time(NULL));
 
     int i;
@@ -151,4 +151,5 @@ main() {
     chanp = ch_drop(chanp);
 
     printf("All tests passed\n");
+    return 0;
 }
