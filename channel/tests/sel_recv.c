@@ -29,7 +29,7 @@ main(void) {
     pthread_t pool[THREADC];
     channel *chanp = ch_make(channel *, 0);
     int ir;
-    channel_set *set = ch_set_make(THREADC);
+    channel_set *set = ch_set_make(THREADC / 2);
     for (int i = 0; i < THREADC; i++) {
         chanpool[i] = ch_make(int, 1);
         assert(pthread_create(pool + i, NULL, identity, chanp) == 0);

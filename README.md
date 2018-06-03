@@ -16,13 +16,13 @@ sanitizers. The "strict-aliasing" rule should not be violated.
 
 ## channel.h
 Go-style channel, a.k.a. MPMC blocking bounded queue with support for
-multiplexing. The buffered channel fast path is lock-free. Somewhat tested. See
-`channel/README.md` for documentation.
+multiplexing. The buffered channel fast path is lock-free. Somewhat tested and
+poorly fuzzed. See `channel/README.md` for documentation.
 
 ## minmax.h
-Min-max-heap-based double-ended priority queue. Fairly well tested, given that
-there really isn't too much you can do with it. See `minmax/README.md` for
-documentation.
+Min-max-heap-based double-ended priority queue. Somewhat tested and fairly well
+fuzzed, given that there really isn't too much you can do with it. See
+`minmax/README.md` for documentation.
 
 ## vector.h
 Conventional array-based vector that also supports stack operations. Both GNU99

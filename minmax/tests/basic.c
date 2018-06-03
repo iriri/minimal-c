@@ -8,8 +8,8 @@ MINMAX_EXTERN_DECL;
 
 int
 cmp_int(void *restrict i, void *restrict i1) {
-    // printf("comparing %d and %d\n", *(int *)i, *(int *)i1);
-    return *(int *)i - *(int *)i1;
+    int i_ = *(int *)i, i1_ = *(int *)i1;
+    return i_ > i1_ ? 1 : i_ < i1_ ? -1 : 0;
 }
 
 void
@@ -17,6 +17,9 @@ verify_int_heap(minmax *m) {
     if (mm_len(m) == 0) {
         return;
     }
+    int min = INT_MIN, max = INT_MAX;
+    mm_peekmin(m, int, min);
+    mm_peekmax(m, int, max);
     for (unsigned i = 0; i < mm_len(m); i++) {
         if (minmax_parent_(i) == SIZE_MAX) {
             continue;
@@ -28,6 +31,7 @@ verify_int_heap(minmax *m) {
         } else {
             assert(self <= parent);
         }
+        assert(self >= min && self <= max);
     }
 }
 

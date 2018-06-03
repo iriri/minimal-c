@@ -106,6 +106,8 @@ struct minmax {
     (__builtin_expect(!(pred), 0) ? \
         minmax_assert_(__FILE__, __LINE__, #pred) : (void)0)
 
+#define mm_elt_(index) m->heap + ((index) * eltsize)
+
 __attribute__((noreturn)) inline void
 minmax_assert_(const char *file, unsigned line, const char *pred) {
     fprintf(stderr, "Failed assertion: %s, %u, %s\n", file, line, pred);
@@ -151,7 +153,7 @@ minmax_push_(minmax *m, size_t eltsize) {
     if (m->len == m->cap) {
         mm_assert_((m->heap = realloc(m->heap, (m->cap *= 2) * eltsize)));
     }
-    return m->heap + (m->len * eltsize);
+    return mm_elt_(m->len);
 }
 
 inline size_t
@@ -180,9 +182,7 @@ minmax_bubble_up_min_(minmax *m, size_t index, size_t eltsize) {
     size_t pindex;
     char *elt, *parent;
     while ((pindex = minmax_parent_(minmax_parent_(index))) != SIZE_MAX &&
-            m->cmpfn(
-                (elt = m->heap + (index * eltsize)),
-                (parent = m->heap + (pindex * eltsize))) < 0) {
+            m->cmpfn((elt = mm_elt_(index)), (parent = mm_elt_(pindex))) < 0) {
         minmax_swap_elts_(elt, parent, eltsize);
         index = pindex;
     }
@@ -193,9 +193,7 @@ minmax_bubble_up_max_(minmax *m, size_t index, size_t eltsize) {
     size_t pindex;
     char *elt, *parent;
     while ((pindex = minmax_parent_(minmax_parent_(index))) != SIZE_MAX &&
-            m->cmpfn(
-                (elt = m->heap + (index * eltsize)),
-                (parent = m->heap + (pindex * eltsize))) > 0) {
+            m->cmpfn((elt = mm_elt_(index)), (parent = mm_elt_(pindex))) > 0) {
         minmax_swap_elts_(elt, parent, eltsize);
         index = pindex;
     }
@@ -209,8 +207,8 @@ minmax_bubble_up_(minmax *m, size_t index, size_t eltsize) {
         return;
     }
 
-    char *elt = m->heap + (index * eltsize);
-    char *parent = m->heap + (pindex * eltsize);
+    char *elt = mm_elt_(index);
+    char *parent = mm_elt_(pindex);
     if (minmax_level_type_max_(index)) {
         if (m->cmpfn(elt, parent) < 0) {
             minmax_swap_elts_(elt, parent, eltsize);
@@ -247,24 +245,20 @@ minmax_trickle_down_min_(minmax *m, size_t index, size_t eltsize) {
 
         size_t gindex = minmax_child_(cindex);
         if (cindex + 1 < m->len) {
-            if (m->cmpfn(
-                    m->heap + (cindex * eltsize),
-                    m->heap + ((cindex + 1) * eltsize)) > 0) {
+            if (m->cmpfn(mm_elt_(cindex), mm_elt_((cindex + 1))) > 0) {
                 cindex++;
             }
             if (gindex < m->len) {
                 for (unsigned i = 0; gindex + i < m->len && i < 4; i++) {
-                    if (m->cmpfn(
-                            m->heap + (cindex * eltsize),
-                            m->heap + ((gindex + i) * eltsize)) > 0) {
+                    if (m->cmpfn(mm_elt_(cindex), mm_elt_((gindex + i))) > 0) {
                         cindex = gindex + i;
                     }
                 }
             }
         }
 
-        char *elt = m->heap + (index * eltsize);
-        char *child = m->heap + (cindex * eltsize);
+        char *elt = mm_elt_(index);
+        char *child = mm_elt_(cindex);
         if (cindex < gindex) {
             if (m->cmpfn(child, elt) < 0) {
                 minmax_swap_elts_(child, elt, eltsize);
@@ -275,7 +269,7 @@ minmax_trickle_down_min_(minmax *m, size_t index, size_t eltsize) {
             return;
         }
         minmax_swap_elts_(child, elt, eltsize);
-        char *parent = m->heap + (minmax_parent_(cindex) * eltsize);
+        char *parent = mm_elt_(minmax_parent_(cindex));
         if (m->cmpfn(child, parent) > 0) {
             minmax_swap_elts_(child, parent, eltsize);
         }
@@ -293,24 +287,20 @@ minmax_trickle_down_max_(minmax *m, size_t index, size_t eltsize) {
 
         size_t gindex = minmax_child_(cindex);
         if (cindex + 1 < m->len) {
-            if (m->cmpfn(
-                    m->heap + (cindex * eltsize),
-                    m->heap + ((cindex + 1) * eltsize)) < 0) {
+            if (m->cmpfn(mm_elt_(cindex), mm_elt_((cindex + 1))) < 0) {
                 cindex++;
             }
             if (gindex < m->len) {
                 for (unsigned i = 0; gindex + i < m->len && i < 4; i++) {
-                    if (m->cmpfn(
-                            m->heap + (cindex * eltsize),
-                            m->heap + ((gindex + i) * eltsize)) < 0) {
+                    if (m->cmpfn(mm_elt_(cindex), mm_elt_((gindex + i))) < 0) {
                         cindex = gindex + i;
                     }
                 }
             }
         }
 
-        char *elt = m->heap + (index * eltsize);
-        char *child = m->heap + (cindex * eltsize);
+        char *elt = mm_elt_(index);
+        char *child = mm_elt_(cindex);
         if (cindex < gindex) {
             if (m->cmpfn(child, elt) > 0) {
                 minmax_swap_elts_(child, elt, eltsize);
@@ -321,7 +311,7 @@ minmax_trickle_down_max_(minmax *m, size_t index, size_t eltsize) {
             return;
         }
         minmax_swap_elts_(child, elt, eltsize);
-        char *parent = m->heap + (minmax_parent_(cindex) * eltsize);
+        char *parent = mm_elt_(minmax_parent_(cindex));
         if (m->cmpfn(child, parent) < 0) {
             minmax_swap_elts_(child, parent, eltsize);
         }
@@ -364,7 +354,7 @@ minmax_peekmin(minmax *m, size_t eltsize, void *elt, bool poll) {
     }
     memcpy(elt, m->heap, eltsize);
     if (poll && --m->len > 0) {
-        memcpy(m->heap, m->heap + (m->len * eltsize), eltsize);
+        memcpy(m->heap, mm_elt_(m->len), eltsize);
         minmax_trickle_down_(m, 0, eltsize);
     }
     return true;
@@ -378,14 +368,16 @@ minmax_peekmax(minmax *m, size_t eltsize, void *elt, bool poll) {
     if (m->len == 0) {
         return false;
     }
-    size_t index = m->cmpfn(m->heap + eltsize, m->heap + (2 * eltsize)) > 0 ?
+    if (m->len < 3) {
+        memcpy(elt, mm_elt_(poll ? --m->len : m->len - 1), eltsize);
+        return true;
+    }
+
+    size_t index = m->cmpfn(mm_elt_(1), mm_elt_(2)) > 0 ?
             1 : 2;
-    memcpy(elt, m->heap + (index * eltsize), eltsize);
+    memcpy(elt, mm_elt_(index), eltsize);
     if (poll && --m->len > 0) {
-        memcpy(
-            m->heap + (index * eltsize),
-            m->heap + (m->len * eltsize),
-            eltsize);
+        memcpy(mm_elt_(index), mm_elt_(m->len), eltsize);
         minmax_trickle_down_(m, index, eltsize);
     }
     return true;

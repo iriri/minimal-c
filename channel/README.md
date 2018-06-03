@@ -28,6 +28,7 @@ typedef enum channel_op channel_op;
 #define CH_TIMEDOUT 0x8
 
 #define CH_SEL_CLOSED UINT32_MAX
+#define CH_SEL_TIMEDOUT (UINT32_MAX - 1)
 ```
 
 #### Op codes
