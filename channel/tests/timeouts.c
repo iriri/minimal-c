@@ -80,7 +80,7 @@ main(void) {
     ok = timedout = 0;
     for (int i = 1; i <= 10000; i++) {
         unsigned id = ch_select(set, 1);
-        if (id != CH_SEL_TIMEDOUT) {
+        if (id != CH_SEL_WBLOCK) {
             ok++;
             assert(ir == id);
             stats[ir]++;

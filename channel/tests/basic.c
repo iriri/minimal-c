@@ -43,17 +43,17 @@ main(void) {
     assert(ch_send(chan, i) == CH_OK);
     i = 2;
     assert(ch_send(chan, i) == CH_OK);
-    /* ch_trysend does not block but immediately returns with CH_FULL */
+    /* ch_trysend does not block but immediately returns with CH_WBLOCK */
     i = 3;
-    assert(ch_trysend(chan, i) == CH_FULL);
+    assert(ch_trysend(chan, i) == CH_WBLOCK);
     /* ch_forcesend is also nonblocking but just overwrites the oldest value
      * instead. Does not work with unbuffered channels. */
-    assert(ch_forcesend(chan, i) == CH_FULL);
+    assert(ch_forcesend(chan, i) == CH_WBLOCK);
     assert(ch_tryrecv(chan, i) == CH_OK);
     assert(i == 2);
     assert(ch_recv(chan, i) == CH_OK);
     assert(i == 3);
-    assert(ch_tryrecv(chan, i) == CH_EMPTY); /* Same deal as ch_trysend */
+    assert(ch_tryrecv(chan, i) == CH_WBLOCK); /* Same deal as ch_trysend */
     assert(i == 3);
     /* Added to make the multiple producer case less painful. Dup increments a
      * reference count and returns the same channel. ch_close decrements the

@@ -15,20 +15,21 @@ is substituted in, C99 support should be good enough.
 ```
 typedef union channel channel;
 typedef struct channel_set channel_set;
+typedef enum channel_rc channel_rc;
 typedef enum channel_op channel_op;
 ```
 
 ### Values
 #### Return codes
 ```
-#define CH_OK 0x0
-#define CH_CLOSED 0x1
-#define CH_FULL 0x2
-#define CH_EMPTY 0x4
-#define CH_TIMEDOUT 0x8
+enum channel_rc {
+    CH_OK,
+    CH_WBLOCK,
+    CH_CLOSED,
+};
 
+#define CH_SEL_WBLOCK (UINT32_MAX - 1)
 #define CH_SEL_CLOSED UINT32_MAX
-#define CH_SEL_TIMEDOUT (UINT32_MAX - 1)
 ```
 
 #### Op codes
@@ -71,9 +72,9 @@ the channel is emptied.
 
 #### ch_send / ch_recv
 ```
-int ch_send(channel *c, T elt)
+channel_rc ch_send(channel *c, T elt)
 
-int ch_recv(channel *c, T elt)
+channel_rc ch_recv(channel *c, T elt)
 ```
 Blocking sends and receives block on buffered channels if the buffer is full or
 empty, respectively, and block on unbuffered channels if there is no waiting
@@ -82,35 +83,33 @@ if the channel is closed.
 
 #### ch_trysend / ch_tryrecv
 ```
-int ch_trysend(channel *c, T elt)
+channel_rc ch_trysend(channel *c, T elt)
 
-int ch_tryrecv(channel *c, T elt)
+channel_rc ch_tryrecv(channel *c, T elt)
 ```
 Nonblocking sends and receives fail on buffered channels if the channel is full
 or empty, respectively, and fail on unbuffered channels if there is no waiting
-receiver or sender, respectively. Both return `CH_OK` on success or `CH_CLOSED`
-if the channel is closed. `ch_trysend` and `ch_tryrecv` respectively return
-`CH_FULL` and `CH_EMPTY` on failure.
+receiver or sender, respectively. Both return `CH_OK` on success, `CH_WBLOCK`
+on failure, or `CH_CLOSED` if the channel is closed.
 
 #### ch_timedsend / ch_timedrecv
 ```
-int ch_timedsend(channel *c, T elt, uint64_t timeout)
+channel_rc ch_timedsend(channel *c, T elt, uint64_t timeout)
 
-int ch_timedrecv(channel *c, T elt, uint64_t timeout)
+channel_rc ch_timedrecv(channel *c, T elt, uint64_t timeout)
 ```
 Timed sends and receives fail on buffered channels if the channel is full or
 empty, respectively, for the duration of the timeout, and fail on unbuffered
 channels if there is no waiting receiver or sender, respectively, for the
 duration of the timeout. `timeout` is specified in milliseconds. Both return
-`CH_OK` on success or `CH_CLOSED` if the channel is closed.  `ch_timedsend` and
-`ch_timedrecv` respectively return `CH_FULL | CH_TIMEDOUT` and `CH_EMPTY |
-CH_TIMEDOUT` on failure.
+`CH_OK` on success, `CH_WBLOCK` on failure, or `CH_CLOSED` if the channel is
+closed.
 
 Not very well tested.
 
 #### ch_forcesend
 ```
-int ch_forcesend(channel *c_, T elt)
+channel_rc ch_forcesend(channel *c_, T elt)
 ```
 Forced sends on buffered channels do not block and instead overwrite the oldest
 message if the buffer is full. Forced sends are not possible with unbuffered
@@ -152,8 +151,8 @@ that is ready to perform that operation. Blocks if no channel is ready. A
 timeout in milliseconds may be optionally specified, or `0` for no timeout.
 Returns the id of the channel successfully completes its operation,
 `CH_SEL_CLOSED` if all channels are closed or have been registered with
-`CH_NOOP`, or `CH_SEL_TIMEDOUT` if no operation successfully completes before
-the timeout.
+`CH_NOOP`, or `CH_SEL_WBLOCK` if no operation successfully completes before the
+timeout.
 
 Not very well tested.
 

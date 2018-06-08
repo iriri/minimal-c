@@ -46,14 +46,14 @@ typedef union channel channel;
 typedef struct channel_set channel_set;
 
 /* Return codes */
-#define CH_OK 0x0
-#define CH_CLOSED 0x1
-#define CH_FULL 0x2
-#define CH_EMPTY 0x4
-#define CH_TIMEDOUT 0x8
+typedef enum channel_rc {
+    CH_OK,
+    CH_WBLOCK,
+    CH_CLOSED,
+} channel_rc;
 
 #define CH_SEL_CLOSED UINT32_MAX // Should be merged somehow with CH_CLOSED?
-#define CH_SEL_TIMEDOUT (UINT32_MAX - 1) // Same
+#define CH_SEL_WBLOCK (UINT32_MAX - 1) // Same
 
 /* Op codes */
 typedef enum channel_op {
@@ -107,48 +107,52 @@ typedef enum channel_op {
         channel_waiter_ *_Atomic *); \
     extern inline void channel_close(channel *); \
     extern inline channel *channel_drop(channel *); \
-    extern inline int channel_buf_trysend_res_cell_( \
+    extern inline channel_rc channel_buf_trysend_res_cell_( \
         channel_buf_ *, char **, uint32_t *); \
     extern inline void channel_buf_waitq_shift_( \
         channel_waiter_ *_Atomic *, ch_mutex_ *); \
-    extern inline int channel_buf_trysend_(channel_buf_ *, void *); \
-    extern inline int channel_unbuf_trysend_try_( \
+    extern inline channel_rc channel_buf_trysend_(channel_buf_ *, void *); \
+    extern inline channel_rc channel_unbuf_trysend_try_( \
         channel_unbuf_ *, channel_waiter_unbuf_ **); \
-    extern inline int channel_unbuf_trysend_(channel_unbuf_ *, void *); \
-    extern inline int channel_trysend(channel *, void *, size_t); \
-    extern inline int channel_buf_tryrecv_res_cell_( \
+    extern inline channel_rc channel_unbuf_trysend_( \
+        channel_unbuf_ *, void *); \
+    extern inline channel_rc channel_trysend(channel *, void *, size_t); \
+    extern inline channel_rc channel_buf_tryrecv_res_cell_( \
         channel_buf_ *, char **, uint32_t *); \
-    extern inline int channel_buf_tryrecv_(channel_buf_ *, void *); \
-    extern inline int channel_unbuf_tryrecv_(channel_unbuf_ *, void *); \
-    extern inline int channel_tryrecv(channel *, void *, size_t); \
-    extern inline int channel_buf_forcesend_res_cell_( \
+    extern inline channel_rc channel_buf_tryrecv_(channel_buf_ *, void *); \
+    extern inline channel_rc channel_unbuf_tryrecv_( \
+        channel_unbuf_ *, void *); \
+    extern inline channel_rc channel_tryrecv(channel *, void *, size_t); \
+    extern inline channel_rc channel_buf_forcesend_res_cell_( \
         channel_buf_ *, char **, uint32_t *); \
-    extern inline int channel_forcesend(channel *, void *, size_t); \
-    extern inline int channel_buf_send_or_add_waiter_( \
+    extern inline channel_rc channel_forcesend(channel *, void *, size_t); \
+    extern inline channel_rc channel_buf_send_or_add_waiter_( \
         channel_buf_ *, void *, ch_sem_ *, channel_waiter_ **); \
-    extern inline int channel_buf_send_(channel_buf_ *, void *); \
-    extern inline int channel_unbuf_send_or_add_waiter_( \
+    extern inline channel_rc channel_buf_send_(channel_buf_ *, void *); \
+    extern inline channel_rc channel_unbuf_send_or_add_waiter_( \
         channel_unbuf_ *, void *, ch_sem_ *, channel_waiter_ **); \
-    extern inline int channel_unbuf_send_(channel_unbuf_ *, void *); \
-    extern inline int channel_send(channel *, void *, size_t); \
-    extern inline int channel_buf_recv_or_add_waiter_( \
+    extern inline channel_rc channel_unbuf_send_(channel_unbuf_ *, void *); \
+    extern inline channel_rc channel_send(channel *, void *, size_t); \
+    extern inline channel_rc channel_buf_recv_or_add_waiter_( \
         channel_buf_ *, void *, ch_sem_ *, channel_waiter_ **); \
-    extern inline int channel_buf_recv_(channel_buf_ *, void *); \
-    extern inline int channel_unbuf_recv_or_add_waiter_( \
+    extern inline channel_rc channel_buf_recv_(channel_buf_ *, void *); \
+    extern inline channel_rc channel_unbuf_recv_or_add_waiter_( \
         channel_unbuf_ *, void *, ch_sem_ *, channel_waiter_ **); \
-    extern inline int channel_unbuf_recv_(channel_unbuf_ *, void *); \
-    extern inline int channel_recv(channel *, void *, size_t); \
+    extern inline channel_rc channel_unbuf_recv_(channel_unbuf_ *, void *); \
+    extern inline channel_rc channel_recv(channel *, void *, size_t); \
     extern inline ch_timespec_ channel_add_timeout_(uint64_t); \
-    extern inline int channel_buf_timedsend_( \
+    extern inline channel_rc channel_buf_timedsend_( \
         channel_buf_ *, void *, ch_timespec_ *); \
-    extern inline int channel_unbuf_timedsend_( \
+    extern inline channel_rc channel_unbuf_timedsend_( \
         channel_unbuf_ *, void *, ch_timespec_ *); \
-    extern inline int channel_timedsend(channel *, void *, uint64_t, size_t); \
-    extern inline int channel_buf_timedrecv_( \
+    extern inline channel_rc channel_timedsend( \
+        channel *, void *, uint64_t, size_t); \
+    extern inline channel_rc channel_buf_timedrecv_( \
         channel_buf_ *, void *, ch_timespec_ *); \
-    extern inline int channel_unbuf_timedrecv_( \
+    extern inline channel_rc channel_unbuf_timedrecv_( \
         channel_unbuf_ *, void *, ch_timespec_ *); \
-    extern inline int channel_timedrecv(channel *, void *, uint64_t, size_t); \
+    extern inline channel_rc channel_timedrecv( \
+        channel *, void *, uint64_t, size_t); \
     extern inline channel_set *channel_set_make(uint32_t); \
     extern inline channel_set *channel_set_drop(channel_set *); \
     extern inline uint32_t channel_set_add( \
@@ -420,8 +424,8 @@ channel_waitq_push_(
         ch_store_seq_cst_(waitq, w);
     } else {
         w->hdr.prev = wq->hdr.prev;
-        wq->hdr.prev = w;
         w->hdr.prev->hdr.next = w;
+        wq->hdr.prev = w;
     }
     return w;
 }
@@ -436,9 +440,7 @@ channel_waitq_remove_(channel_waiter_ *_Atomic *waitq, channel_waiter_ *w) {
         return true;
     }
 
-    if (w->hdr.prev->hdr.next) {
-        w->hdr.prev->hdr.next = w->hdr.next;
-    }
+    w->hdr.prev->hdr.next = w->hdr.next;
     if (w->hdr.next) {
         w->hdr.next->hdr.prev = w->hdr.prev;
     } else {
@@ -504,7 +506,7 @@ channel_drop(channel *c) {
     return NULL;
 }
 
-inline int
+inline channel_rc
 channel_buf_trysend_res_cell_(channel_buf_ *c, char **cell, uint32_t *lap) {
     for (int i = 0; ; ) {
         if (ch_load_acq_(&c->refc) == 0) {
@@ -519,7 +521,7 @@ channel_buf_trysend_res_cell_(channel_buf_ *c, char **cell, uint32_t *lap) {
                 sched_yield();
                 continue;
             }
-            return CH_FULL;
+            return CH_WBLOCK;
         }
 
         uint64_t write1 = write.u32.index + 1 < c->cap ?
@@ -552,11 +554,11 @@ channel_buf_waitq_shift_(channel_waiter_ *_Atomic *waitq, ch_mutex_ *lock) {
     }
 }
 
-inline int
+inline channel_rc
 channel_buf_trysend_(channel_buf_ *c, void *elt) {
     char *cell;
     uint32_t lap;
-    int rc = channel_buf_trysend_res_cell_(c, &cell, &lap);
+    channel_rc rc = channel_buf_trysend_res_cell_(c, &cell, &lap);
     if (rc != CH_OK) {
         return rc;
     }
@@ -567,14 +569,14 @@ channel_buf_trysend_(channel_buf_ *c, void *elt) {
     return CH_OK;
 }
 
-inline int
+inline channel_rc
 channel_unbuf_trysend_try_(channel_unbuf_ *c, channel_waiter_unbuf_ **w) {
     for ( ; ; ) {
         if (ch_load_acq_(&c->refc) == 0) {
             return CH_CLOSED;
         }
         if (!ch_load_acq_(&c->recvq)) {
-            return CH_FULL;
+            return CH_WBLOCK;
         }
 
         ch_mutex_lock_(&c->lock);
@@ -585,7 +587,7 @@ channel_unbuf_trysend_try_(channel_unbuf_ *c, channel_waiter_unbuf_ **w) {
         *w = &channel_waitq_shift_(&c->recvq)->unbuf;
         ch_mutex_unlock_(&c->lock);
         if (!*w) {
-            return CH_FULL;
+            return CH_WBLOCK;
         }
         if ((*w)->sel_state) {
             uint32_t magic = CH_SEL_MAGIC_;
@@ -598,10 +600,10 @@ channel_unbuf_trysend_try_(channel_unbuf_ *c, channel_waiter_unbuf_ **w) {
     }
 }
 
-inline int
+inline channel_rc
 channel_unbuf_trysend_(channel_unbuf_ *c, void *elt) {
     channel_waiter_unbuf_ *w;
-    int rc = channel_unbuf_trysend_try_(c, &w);
+    channel_rc rc = channel_unbuf_trysend_try_(c, &w);
     if (rc != CH_OK) {
         return rc;
     }
@@ -613,8 +615,8 @@ channel_unbuf_trysend_(channel_unbuf_ *c, void *elt) {
 
 /* Nonblocking sends fail on buffered channels if the channel is full and fail
  * on unbuffered channels if there is no waiting receiver. Returns `CH_OK` on
- * success, `CH_FULL` on failure, or `CH_CLOSED` if the channel is closed. */
-inline int
+ * success, `CH_WBLOCK` on failure, or `CH_CLOSED` if the channel is closed. */
+inline channel_rc
 channel_trysend(channel *c, void *elt, size_t eltsize) {
     ch_assert_(eltsize == c->hdr.eltsize);
     if (c->hdr.cap > 0) {
@@ -623,7 +625,7 @@ channel_trysend(channel *c, void *elt, size_t eltsize) {
     return channel_unbuf_trysend_(&c->unbuf, elt);
 }
 
-inline int
+inline channel_rc
 channel_buf_tryrecv_res_cell_(channel_buf_ *c, char **cell, uint32_t *lap) {
     for (int i = 0; ; ) {
         channel_un64_ read = {ch_load_acq_(&c->read.u64)};
@@ -637,7 +639,7 @@ channel_buf_tryrecv_res_cell_(channel_buf_ *c, char **cell, uint32_t *lap) {
                 sched_yield();
                 continue;
             }
-            return CH_EMPTY;
+            return CH_WBLOCK;
         }
 
         uint64_t read1 = read.u32.index + 1 < c->cap ?
@@ -648,11 +650,11 @@ channel_buf_tryrecv_res_cell_(channel_buf_ *c, char **cell, uint32_t *lap) {
     }
 }
 
-inline int
+inline channel_rc
 channel_buf_tryrecv_(channel_buf_ *c, void *elt) {
     char *cell;
     uint32_t lap;
-    int rc = channel_buf_tryrecv_res_cell_(c, &cell, &lap);
+    channel_rc rc = channel_buf_tryrecv_res_cell_(c, &cell, &lap);
     if (rc != CH_OK) {
         return rc;
     }
@@ -663,14 +665,14 @@ channel_buf_tryrecv_(channel_buf_ *c, void *elt) {
     return CH_OK;
 }
 
-inline int
+inline channel_rc
 channel_unbuf_tryrecv_(channel_unbuf_ *c, void *elt) {
     for ( ; ; ) {
         if (ch_load_acq_(&c->refc) == 0) {
             return CH_CLOSED;
         }
         if (!ch_load_acq_(&c->sendq)) {
-            return CH_EMPTY;
+            return CH_WBLOCK;
         }
 
         ch_mutex_lock_(&c->lock);
@@ -681,7 +683,7 @@ channel_unbuf_tryrecv_(channel_unbuf_ *c, void *elt) {
         channel_waiter_unbuf_ *w = &channel_waitq_shift_(&c->sendq)->unbuf;
         ch_mutex_unlock_(&c->lock);
         if (!w) {
-            return CH_EMPTY;
+            return CH_WBLOCK;
         }
         if (w->sel_state) {
             uint32_t magic = CH_SEL_MAGIC_;
@@ -698,9 +700,9 @@ channel_unbuf_tryrecv_(channel_unbuf_ *c, void *elt) {
 
 /* Nonblocking receives fail on buffered channels if the channel is empty and
  * fail on unbuffered channels if there is no waiting sender. Returns `CH_OK`
- * on success, `CH_EMPTY` on failure, or `CH_CLOSED` if the channel is closed.
- */
-inline int
+ * on success, `CH_WBLOCK` on failure, or `CH_CLOSED` if the channel is
+ * closed. */
+inline channel_rc
 channel_tryrecv(channel *c, void *elt, size_t eltsize) {
     ch_assert_(eltsize == c->hdr.eltsize);
     if (c->hdr.cap > 0) {
@@ -709,7 +711,7 @@ channel_tryrecv(channel *c, void *elt, size_t eltsize) {
     return channel_unbuf_tryrecv_(&c->unbuf, elt);
 }
 
-inline int
+inline channel_rc
 channel_buf_forcesend_res_cell_(channel_buf_ *c, char **cell, uint32_t *lap) {
     for (bool full = false; ; ) {
         if (ch_load_acq_(&c->refc) == 0) {
@@ -739,7 +741,7 @@ channel_buf_forcesend_res_cell_(channel_buf_ *c, char **cell, uint32_t *lap) {
         uint64_t write1 = write.u32.index + 1 < c->cap ?
                 write.u64 + 1 : (uint64_t)(write.u32.lap + 2) << 32;
         if (ch_cas_weak_(&c->write.u64, &write.u64, write1)) {
-            return full ? CH_FULL : CH_OK;
+            return full ? CH_WBLOCK : CH_OK;
         }
     }
 }
@@ -748,12 +750,12 @@ channel_buf_forcesend_res_cell_(channel_buf_ *c, char **cell, uint32_t *lap) {
  * message if the buffer is full. Forced sends are not possible with unbuffered
  * channels. Returns `CH_OK` on success or `CH_CLOSED` if the channel is
  * closed. */
-inline int
+inline channel_rc
 channel_forcesend(channel *c, void *elt, size_t eltsize) {
     ch_assert_(eltsize == c->hdr.eltsize && c->hdr.cap > 0);
     char *cell;
     uint32_t lap;
-    int rc = channel_buf_forcesend_res_cell_(&c->buf, &cell, &lap);
+    channel_rc rc = channel_buf_forcesend_res_cell_(&c->buf, &cell, &lap);
     if (rc != CH_CLOSED) {
         memcpy(ch_cell_elt_(cell), elt, c->buf.eltsize);
         ch_store_seq_cst_(ch_cell_lap_(cell), lap + 1);
@@ -762,13 +764,13 @@ channel_forcesend(channel *c, void *elt, size_t eltsize) {
     return rc;
 }
 
-inline int
+inline channel_rc
 channel_buf_send_or_add_waiter_(
     channel_buf_ *c, void *elt, ch_sem_ *sem, channel_waiter_ **w
 ) {
     for ( ; ; ) {
-        int rc = channel_buf_trysend_(c, elt);
-        if (rc != CH_FULL) {
+        channel_rc rc = channel_buf_trysend_(c, elt);
+        if (rc != CH_WBLOCK) {
             return rc;
         }
 
@@ -777,29 +779,28 @@ channel_buf_send_or_add_waiter_(
             ch_mutex_unlock_(&c->lock);
             return CH_CLOSED;
         }
-        ch_sem_init_(sem, 0, 0);
         *w = channel_waitq_push_(&c->sendq, sem, NULL, CH_SEL_NIL_, NULL);
         channel_un64_ write = {ch_load_acq_(&c->write.u64)};
         char *cell = c->buf + (write.u32.index * ch_cellsize_(c->eltsize));
         if (write.u32.lap == ch_load_acq_(ch_cell_lap_(cell))) {
             channel_waitq_remove_(&c->sendq, *w);
             ch_mutex_unlock_(&c->lock);
-            ch_sem_destroy_(sem);
             free(*w);
             continue;
         }
+        ch_sem_init_(sem, 0, 0);
         ch_mutex_unlock_(&c->lock);
-        return CH_FULL;
+        return CH_WBLOCK;
     }
 }
 
-inline int
+inline channel_rc
 channel_buf_send_(channel_buf_ *c, void *elt) {
     for ( ; ; ) {
         ch_sem_ sem;
         channel_waiter_ *w;
-        int rc = channel_buf_send_or_add_waiter_(c, elt, &sem, &w);
-        if (rc != CH_FULL) {
+        channel_rc rc = channel_buf_send_or_add_waiter_(c, elt, &sem, &w);
+        if (rc != CH_WBLOCK) {
             return rc;
         }
 
@@ -809,7 +810,7 @@ channel_buf_send_(channel_buf_ *c, void *elt) {
     }
 }
 
-inline int
+inline channel_rc
 channel_unbuf_send_or_add_waiter_(
     channel_unbuf_ *c, void *elt, ch_sem_ *sem, channel_waiter_ **w
 ) {
@@ -840,16 +841,16 @@ channel_unbuf_send_or_add_waiter_(
         ch_sem_init_(sem, 0, 0);
         *w = channel_waitq_push_(&c->sendq, sem, NULL, CH_SEL_NIL_, elt);
         ch_mutex_unlock_(&c->lock);
-        return CH_FULL;
+        return CH_WBLOCK;
     }
 }
 
-inline int
+inline channel_rc
 channel_unbuf_send_(channel_unbuf_ *c, void *elt) {
     ch_sem_ sem;
     channel_waiter_ *w;
-    int rc = channel_unbuf_send_or_add_waiter_(c, elt, &sem, &w);
-    if (rc != CH_FULL) {
+    channel_rc rc = channel_unbuf_send_or_add_waiter_(c, elt, &sem, &w);
+    if (rc != CH_WBLOCK) {
         return rc;
     }
 
@@ -863,7 +864,7 @@ channel_unbuf_send_(channel_unbuf_ *c, void *elt) {
 /* Blocking sends block on buffered channels if the buffer is full and block on
  * unbuffered channels if there is no waiting receiver. Returns `CH_OK` on
  * success or `CH_CLOSED` if the channel is closed. */
-inline int
+inline channel_rc
 channel_send(channel *c, void *elt, size_t eltsize) {
     ch_assert_(eltsize == c->hdr.eltsize);
     if (c->hdr.cap > 0) {
@@ -872,47 +873,45 @@ channel_send(channel *c, void *elt, size_t eltsize) {
     return channel_unbuf_send_(&c->unbuf, elt);
 }
 
-inline int
+inline channel_rc
 channel_buf_recv_or_add_waiter_(
     channel_buf_ *c, void *elt, ch_sem_ *sem, channel_waiter_ **w
 ) {
     for ( ; ; ) {
-        int rc = channel_buf_tryrecv_(c, elt);
-        if (rc != CH_EMPTY) {
+        channel_rc rc = channel_buf_tryrecv_(c, elt);
+        if (rc != CH_WBLOCK) {
             return rc;
         }
 
         ch_mutex_lock_(&c->lock);
-        ch_sem_init_(sem, 0, 0);
         *w = channel_waitq_push_(&c->recvq, sem, NULL, CH_SEL_NIL_, NULL);
         channel_un64_ read = {ch_load_acq_(&c->read.u64)};
         char *cell = c->buf + (read.u32.index * ch_cellsize_(c->eltsize));
         if (read.u32.lap == ch_load_acq_(ch_cell_lap_(cell))) {
             channel_waitq_remove_(&c->recvq, *w);
             ch_mutex_unlock_(&c->lock);
-            ch_sem_destroy_(sem);
             free(*w);
             continue;
         }
         if (ch_load_acq_(&c->refc) == 0) {
             channel_waitq_remove_(&c->recvq, *w);
             ch_mutex_unlock_(&c->lock);
-            ch_sem_destroy_(sem);
             free(*w);
             return CH_CLOSED;
         }
+        ch_sem_init_(sem, 0, 0);
         ch_mutex_unlock_(&c->lock);
-        return CH_EMPTY;
+        return CH_WBLOCK;
     }
 }
 
-inline int
+inline channel_rc
 channel_buf_recv_(channel_buf_ *c, void *elt) {
     for ( ; ; ) {
         ch_sem_ sem;
         channel_waiter_ *w;
-        int rc = channel_buf_recv_or_add_waiter_(c, elt, &sem, &w);
-        if (rc != CH_EMPTY) {
+        channel_rc rc = channel_buf_recv_or_add_waiter_(c, elt, &sem, &w);
+        if (rc != CH_WBLOCK) {
             return rc;
         }
 
@@ -922,7 +921,7 @@ channel_buf_recv_(channel_buf_ *c, void *elt) {
     }
 }
 
-inline int
+inline channel_rc
 channel_unbuf_recv_or_add_waiter_(
     channel_unbuf_ *c, void *elt, ch_sem_ *sem, channel_waiter_ **w
 ) {
@@ -953,16 +952,16 @@ channel_unbuf_recv_or_add_waiter_(
         ch_sem_init_(sem, 0, 0);
         *w = channel_waitq_push_(&c->recvq, sem, NULL, CH_SEL_NIL_, elt);
         ch_mutex_unlock_(&c->lock);
-        return CH_EMPTY;
+        return CH_WBLOCK;
     }
 }
 
-inline int
+inline channel_rc
 channel_unbuf_recv_(channel_unbuf_ *c, void *elt) {
     ch_sem_ sem;
     channel_waiter_ *w;
-    int rc = channel_unbuf_recv_or_add_waiter_(c, elt, &sem, &w);
-    if (rc != CH_EMPTY) {
+    channel_rc rc = channel_unbuf_recv_or_add_waiter_(c, elt, &sem, &w);
+    if (rc != CH_WBLOCK) {
         return rc;
     }
 
@@ -976,7 +975,7 @@ channel_unbuf_recv_(channel_unbuf_ *c, void *elt) {
 /* Blocking receives block on buffered channels if the buffer is empty and
  * block on unbuffered channels if there is no waiting sender. Returns `CH_OK`
  * on success or `CH_CLOSED` if the channel is closed. */
-inline int
+inline channel_rc
 channel_recv(channel *c, void *elt, size_t eltsize) {
     ch_assert_(eltsize == c->hdr.eltsize);
     if (c->hdr.cap > 0) {
@@ -1002,13 +1001,13 @@ channel_add_timeout_(uint64_t timeout) {
     return ts;
 }
 
-inline int
+inline channel_rc
 channel_buf_timedsend_(channel_buf_ *c, void *elt, ch_timespec_ *timeout) {
     for ( ; ; ) {
         ch_sem_ sem;
         channel_waiter_ *w;
-        int rc = channel_buf_send_or_add_waiter_(c, elt, &sem, &w);
-        if (rc != CH_FULL) {
+        channel_rc rc = channel_buf_send_or_add_waiter_(c, elt, &sem, &w);
+        if (rc != CH_WBLOCK) {
             return rc;
         }
 
@@ -1018,8 +1017,8 @@ channel_buf_timedsend_(channel_buf_ *c, void *elt, ch_timespec_ *timeout) {
             ch_mutex_unlock_(&c->lock);
             if (!onqueue) {
                 ch_sem_wait_(w->buf.sem);
-                int rc = channel_buf_trysend_(c, elt);
-                if (rc != CH_FULL) {
+                channel_rc rc = channel_buf_trysend_(c, elt);
+                if (rc != CH_WBLOCK) {
                     ch_sem_destroy_(&sem);
                     free(w);
                     return rc;
@@ -1027,19 +1026,19 @@ channel_buf_timedsend_(channel_buf_ *c, void *elt, ch_timespec_ *timeout) {
             }
             ch_sem_destroy_(&sem);
             free(w);
-            return CH_FULL | CH_TIMEDOUT;
+            return CH_WBLOCK;
         }
         ch_sem_destroy_(&sem);
         free(w);
     }
 }
 
-inline int
+inline channel_rc
 channel_unbuf_timedsend_(channel_unbuf_ *c, void *elt, ch_timespec_ *timeout) {
     ch_sem_ sem;
     channel_waiter_ *w;
-    int rc = channel_unbuf_send_or_add_waiter_(c, elt, &sem, &w);
-    if (rc != CH_FULL) {
+    channel_rc rc = channel_unbuf_send_or_add_waiter_(c, elt, &sem, &w);
+    if (rc != CH_WBLOCK) {
         return rc;
     }
     if (ch_load_acq_(&c->refc) == 0) {
@@ -1051,7 +1050,7 @@ channel_unbuf_timedsend_(channel_unbuf_ *c, void *elt, ch_timespec_ *timeout) {
         bool onqueue = channel_waitq_remove_(&c->sendq, w);
         ch_mutex_unlock_(&c->lock);
         if (onqueue) {
-            rc = CH_EMPTY | CH_TIMEDOUT;
+            rc = CH_WBLOCK;
             goto cleanup;
         }
         ch_sem_wait_(w->unbuf.sem);
@@ -1066,9 +1065,8 @@ cleanup:
 /* Timed sends fail on buffered channels if the channel is full for the
  * duration of the timeout and fail on unbuffered channels if there is no
  * waiting receiver for the duration of the timeout. Returns `CH_OK` on
- * success, `CH_FULL | CH_TIMEDOUT` on failure, or `CH_CLOSED` if the channel
- * is closed. */
-inline int
+ * success, `CH_WBLOCK` on failure, or `CH_CLOSED` if the channel is closed. */
+inline channel_rc
 channel_timedsend(channel *c, void *elt, uint64_t timeout, size_t eltsize) {
     ch_assert_(eltsize == c->hdr.eltsize);
     ch_timespec_ t = channel_add_timeout_(timeout);
@@ -1078,13 +1076,13 @@ channel_timedsend(channel *c, void *elt, uint64_t timeout, size_t eltsize) {
     return channel_unbuf_timedsend_(&c->unbuf, elt, &t);
 }
 
-inline int
+inline channel_rc
 channel_buf_timedrecv_(channel_buf_ *c, void *elt, ch_timespec_ *timeout) {
     for ( ; ; ) {
         ch_sem_ sem;
         channel_waiter_ *w;
-        int rc = channel_buf_recv_or_add_waiter_(c, elt, &sem, &w);
-        if (rc != CH_EMPTY) {
+        channel_rc rc = channel_buf_recv_or_add_waiter_(c, elt, &sem, &w);
+        if (rc != CH_WBLOCK) {
             return rc;
         }
 
@@ -1094,8 +1092,8 @@ channel_buf_timedrecv_(channel_buf_ *c, void *elt, ch_timespec_ *timeout) {
             ch_mutex_unlock_(&c->lock);
             if (!onqueue) {
                 ch_sem_wait_(w->buf.sem);
-                int rc = channel_buf_tryrecv_(c, elt);
-                if (rc != CH_EMPTY) {
+                channel_rc rc = channel_buf_tryrecv_(c, elt);
+                if (rc != CH_WBLOCK) {
                     ch_sem_destroy_(&sem);
                     free(w);
                     return rc;
@@ -1103,19 +1101,19 @@ channel_buf_timedrecv_(channel_buf_ *c, void *elt, ch_timespec_ *timeout) {
             }
             ch_sem_destroy_(&sem);
             free(w);
-            return CH_EMPTY | CH_TIMEDOUT;
+            return CH_WBLOCK;
         }
         ch_sem_destroy_(&sem);
         free(w);
     }
 }
 
-inline int
+inline channel_rc
 channel_unbuf_timedrecv_(channel_unbuf_ *c, void *elt, ch_timespec_ *timeout) {
     ch_sem_ sem;
     channel_waiter_ *w;
-    int rc = channel_unbuf_recv_or_add_waiter_(c, elt, &sem, &w);
-    if (rc != CH_EMPTY) {
+    channel_rc rc = channel_unbuf_recv_or_add_waiter_(c, elt, &sem, &w);
+    if (rc != CH_WBLOCK) {
         return rc;
     }
 
@@ -1124,7 +1122,7 @@ channel_unbuf_timedrecv_(channel_unbuf_ *c, void *elt, ch_timespec_ *timeout) {
         bool onqueue = channel_waitq_remove_(&c->recvq, w);
         ch_mutex_unlock_(&c->lock);
         if (onqueue) {
-            rc = CH_EMPTY | CH_TIMEDOUT;
+            rc = CH_WBLOCK;
             goto cleanup;
         }
         ch_sem_wait_(w->unbuf.sem);
@@ -1139,9 +1137,8 @@ cleanup:
 /* Timed receives fail on buffered channels if the channel is empty for the
  * duration of the timeout and fail on unbuffered channels if there is no
  * waiting sender for the duration of the timeout. Returns `CH_OK` on success,
- * `CH_EMPTY | CH_TIMEDOUT` on failure, or `CH_CLOSED` if the channel is
- * closed. */
-inline int
+ * `CH_WBLOCK` on failure, or `CH_CLOSED` if the channel is closed. */
+inline channel_rc
 channel_timedrecv(channel *c, void *elt, uint64_t timeout, size_t eltsize) {
     ch_assert_(eltsize == c->hdr.eltsize);
     ch_timespec_ t = channel_add_timeout_(timeout);
@@ -1233,10 +1230,7 @@ channel_select_ready_(channel *c, channel_op op) {
             u.u64 = ch_load_acq_(&c->buf.read.u64);
         }
         char *cell = c->buf.buf + (u.u32.index * ch_cellsize_(c->buf.eltsize));
-        if (u.u32.lap == ch_load_acq_(ch_cell_lap_(cell))) {
-            return true;
-        }
-        return false;
+        return u.u32.lap == ch_load_acq_(ch_cell_lap_(cell));
     }
 
     if (op == CH_SEND) { // Could just do the operation here?
@@ -1362,7 +1356,7 @@ channel_select(channel_set *s, uint64_t timeout) {
             }
         }
         if (timedout) {
-            return CH_SEL_TIMEDOUT;
+            return CH_SEL_WBLOCK;
         }
     }
 }
