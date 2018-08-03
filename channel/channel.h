@@ -95,12 +95,9 @@ typedef enum channel_op {
         const char *, unsigned, const char *) __attribute__((noreturn)); \
     extern inline channel *channel_make(size_t, uint32_t); \
     extern inline channel *channel_dup(channel *); \
-    extern inline channel_waiter_ *channel_waitq_push_( \
+    extern inline void channel_waitq_push_( \
         channel_waiter_ *_Atomic *, \
-        ch_sem_ *, \
-        _Atomic uint32_t *, \
-        uint32_t, \
-        void *); \
+        channel_waiter_ *waiter); \
     extern inline bool channel_waitq_remove_( \
         channel_waiter_ *_Atomic *, channel_waiter_ *); \
     extern inline channel_waiter_ *channel_waitq_shift_( \
@@ -127,17 +124,17 @@ typedef enum channel_op {
         channel_buf_ *, char **, uint32_t *); \
     extern inline channel_rc channel_forcesend(channel *, void *, size_t); \
     extern inline channel_rc channel_buf_send_or_add_waiter_( \
-        channel_buf_ *, void *, ch_sem_ *, channel_waiter_ **); \
+        channel_buf_ *, void *, channel_waiter_ *); \
     extern inline channel_rc channel_buf_send_(channel_buf_ *, void *); \
     extern inline channel_rc channel_unbuf_send_or_add_waiter_( \
-        channel_unbuf_ *, void *, ch_sem_ *, channel_waiter_ **); \
+        channel_unbuf_ *, void *, channel_waiter_ *); \
     extern inline channel_rc channel_unbuf_send_(channel_unbuf_ *, void *); \
     extern inline channel_rc channel_send(channel *, void *, size_t); \
     extern inline channel_rc channel_buf_recv_or_add_waiter_( \
-        channel_buf_ *, void *, ch_sem_ *, channel_waiter_ **); \
+        channel_buf_ *, void *, channel_waiter_ *); \
     extern inline channel_rc channel_buf_recv_(channel_buf_ *, void *); \
     extern inline channel_rc channel_unbuf_recv_or_add_waiter_( \
-        channel_unbuf_ *, void *, ch_sem_ *, channel_waiter_ **); \
+        channel_unbuf_ *, void *, channel_waiter_ *); \
     extern inline channel_rc channel_unbuf_recv_(channel_unbuf_ *, void *); \
     extern inline channel_rc channel_recv(channel *, void *, size_t); \
     extern inline ch_timespec_ channel_add_timeout_(uint64_t); \
@@ -234,9 +231,6 @@ channel_sem_timedwait_(sem_t *sem, const struct timespec *ts) {
 #endif
 #endif
 
-/* TODO Consider replacing the wait queues with ring buffers. Linked lists were
- * chosen because constant-time removal regardless of position is, in theory,
- * nice for timeouts but ring buffers are much more performant in general. */
 typedef struct channel_waiter_hdr_ {
     union channel_waiter_ *prev, *next;
     ch_sem_ *sem;
@@ -399,35 +393,18 @@ channel_dup(channel *c) {
     return c;
 }
 
-inline channel_waiter_ *
-channel_waitq_push_(
-    channel_waiter_ *_Atomic *waitq,
-    ch_sem_ *sem,
-    _Atomic uint32_t *state,
-    uint32_t sel_id,
-    void *elt
-) {
-    channel_waiter_ *w;
-    if (!elt) {
-        ch_assert_((w = calloc(1, sizeof(w->buf))));
-    } else {
-        ch_assert_((w = calloc(1, sizeof(w->unbuf))));
-        w->unbuf.elt = elt;
-    }
-    w->hdr.sem = sem;
-    w->hdr.sel_state = state;
-    w->unbuf.sel_id = sel_id;
-
+inline void
+channel_waitq_push_(channel_waiter_ *_Atomic *waitq, channel_waiter_ *waiter) {
     channel_waiter_ *wq = ch_load_acq_(waitq);
     if (!wq) {
-        w->hdr.prev = w;
-        ch_store_seq_cst_(waitq, w);
+        waiter->hdr.prev = waiter;
+        ch_store_seq_cst_(waitq, waiter);
     } else {
-        w->hdr.prev = wq->hdr.prev;
-        w->hdr.prev->hdr.next = w;
-        wq->hdr.prev = w;
+        waiter->hdr.prev = wq->hdr.prev;
+        waiter->hdr.prev->hdr.next = waiter;
+        wq->hdr.prev = waiter;
     }
-    return w;
+    waiter->hdr.next = NULL;
 }
 
 inline bool
@@ -440,7 +417,9 @@ channel_waitq_remove_(channel_waiter_ *_Atomic *waitq, channel_waiter_ *w) {
         return true;
     }
 
-    w->hdr.prev->hdr.next = w->hdr.next;
+    if (w->hdr.prev->hdr.next) {
+        w->hdr.prev->hdr.next = w->hdr.next;
+    }
     if (w->hdr.next) {
         w->hdr.next->hdr.prev = w->hdr.prev;
     } else {
@@ -766,7 +745,7 @@ channel_forcesend(channel *c, void *elt, size_t eltsize) {
 
 inline channel_rc
 channel_buf_send_or_add_waiter_(
-    channel_buf_ *c, void *elt, ch_sem_ *sem, channel_waiter_ **w
+    channel_buf_ *c, void *elt, channel_waiter_ *w
 ) {
     for ( ; ; ) {
         channel_rc rc = channel_buf_trysend_(c, elt);
@@ -779,16 +758,14 @@ channel_buf_send_or_add_waiter_(
             ch_mutex_unlock_(&c->lock);
             return CH_CLOSED;
         }
-        *w = channel_waitq_push_(&c->sendq, sem, NULL, CH_SEL_NIL_, NULL);
+        channel_waitq_push_(&c->sendq, w);
         channel_un64_ write = {ch_load_acq_(&c->write.u64)};
         char *cell = c->buf + (write.u32.index * ch_cellsize_(c->eltsize));
         if (write.u32.lap == ch_load_acq_(ch_cell_lap_(cell))) {
-            channel_waitq_remove_(&c->sendq, *w);
+            channel_waitq_remove_(&c->sendq, w);
             ch_mutex_unlock_(&c->lock);
-            free(*w);
             continue;
         }
-        ch_sem_init_(sem, 0, 0);
         ch_mutex_unlock_(&c->lock);
         return CH_WBLOCK;
     }
@@ -796,23 +773,26 @@ channel_buf_send_or_add_waiter_(
 
 inline channel_rc
 channel_buf_send_(channel_buf_ *c, void *elt) {
+    ch_sem_ sem;
+    ch_sem_init_(&sem, 0, 0);
+    channel_waiter_buf_ w = {.sem = &sem, .sel_id = CH_SEL_NIL_};
+
     for ( ; ; ) {
-        ch_sem_ sem;
-        channel_waiter_ *w;
-        channel_rc rc = channel_buf_send_or_add_waiter_(c, elt, &sem, &w);
+        /* TODO: Casts are evil. Figure out how to get rid of these. */
+        channel_rc rc =
+            channel_buf_send_or_add_waiter_(c, elt, (channel_waiter_ *)&w);
         if (rc != CH_WBLOCK) {
+            ch_sem_destroy_(&sem);
             return rc;
         }
 
         ch_sem_wait_(&sem);
-        ch_sem_destroy_(&sem);
-        free(w);
     }
 }
 
 inline channel_rc
 channel_unbuf_send_or_add_waiter_(
-    channel_unbuf_ *c, void *elt, ch_sem_ *sem, channel_waiter_ **w
+    channel_unbuf_ *c, void *elt, channel_waiter_ *w
 ) {
     for ( ; ; ) {
         if (ch_load_acq_(&c->refc) == 0) {
@@ -838,8 +818,7 @@ channel_unbuf_send_or_add_waiter_(
             ch_sem_post_(w1->sem);
             return CH_OK;
         }
-        ch_sem_init_(sem, 0, 0);
-        *w = channel_waitq_push_(&c->sendq, sem, NULL, CH_SEL_NIL_, elt);
+        channel_waitq_push_(&c->sendq, w);
         ch_mutex_unlock_(&c->lock);
         return CH_WBLOCK;
     }
@@ -848,17 +827,17 @@ channel_unbuf_send_or_add_waiter_(
 inline channel_rc
 channel_unbuf_send_(channel_unbuf_ *c, void *elt) {
     ch_sem_ sem;
-    channel_waiter_ *w;
-    channel_rc rc = channel_unbuf_send_or_add_waiter_(c, elt, &sem, &w);
+    ch_sem_init_(&sem, 0, 0);
+    channel_waiter_unbuf_ w = {.sem = &sem, .sel_id = CH_SEL_NIL_, .elt = elt};
+    channel_rc rc =
+        channel_unbuf_send_or_add_waiter_(c, elt, (channel_waiter_ *)&w);
     if (rc != CH_WBLOCK) {
         return rc;
     }
 
     ch_sem_wait_(&sem);
-    rc = w->unbuf.closed ? CH_CLOSED : CH_OK;
     ch_sem_destroy_(&sem);
-    free(w);
-    return rc;
+    return w.closed ? CH_CLOSED : CH_OK;
 }
 
 /* Blocking sends block on buffered channels if the buffer is full and block on
@@ -875,7 +854,7 @@ channel_send(channel *c, void *elt, size_t eltsize) {
 
 inline channel_rc
 channel_buf_recv_or_add_waiter_(
-    channel_buf_ *c, void *elt, ch_sem_ *sem, channel_waiter_ **w
+    channel_buf_ *c, void *elt, channel_waiter_ *w
 ) {
     for ( ; ; ) {
         channel_rc rc = channel_buf_tryrecv_(c, elt);
@@ -884,22 +863,19 @@ channel_buf_recv_or_add_waiter_(
         }
 
         ch_mutex_lock_(&c->lock);
-        *w = channel_waitq_push_(&c->recvq, sem, NULL, CH_SEL_NIL_, NULL);
+        channel_waitq_push_(&c->recvq, w);
         channel_un64_ read = {ch_load_acq_(&c->read.u64)};
         char *cell = c->buf + (read.u32.index * ch_cellsize_(c->eltsize));
         if (read.u32.lap == ch_load_acq_(ch_cell_lap_(cell))) {
-            channel_waitq_remove_(&c->recvq, *w);
+            channel_waitq_remove_(&c->recvq, w);
             ch_mutex_unlock_(&c->lock);
-            free(*w);
             continue;
         }
         if (ch_load_acq_(&c->refc) == 0) {
-            channel_waitq_remove_(&c->recvq, *w);
+            channel_waitq_remove_(&c->recvq, w);
             ch_mutex_unlock_(&c->lock);
-            free(*w);
             return CH_CLOSED;
         }
-        ch_sem_init_(sem, 0, 0);
         ch_mutex_unlock_(&c->lock);
         return CH_WBLOCK;
     }
@@ -907,23 +883,25 @@ channel_buf_recv_or_add_waiter_(
 
 inline channel_rc
 channel_buf_recv_(channel_buf_ *c, void *elt) {
+    ch_sem_ sem;
+    ch_sem_init_(&sem, 0, 0);
+    channel_waiter_buf_ w = {.sem = &sem, .sel_id = CH_SEL_NIL_};
+
     for ( ; ; ) {
-        ch_sem_ sem;
-        channel_waiter_ *w;
-        channel_rc rc = channel_buf_recv_or_add_waiter_(c, elt, &sem, &w);
+        channel_rc rc =
+            channel_buf_recv_or_add_waiter_(c, elt, (channel_waiter_ *)&w);
         if (rc != CH_WBLOCK) {
+            ch_sem_destroy_(&sem);
             return rc;
         }
 
         ch_sem_wait_(&sem);
-        ch_sem_destroy_(&sem);
-        free(w);
     }
 }
 
 inline channel_rc
 channel_unbuf_recv_or_add_waiter_(
-    channel_unbuf_ *c, void *elt, ch_sem_ *sem, channel_waiter_ **w
+    channel_unbuf_ *c, void *elt, channel_waiter_ *w
 ) {
     for ( ; ; ) {
         if (ch_load_acq_(&c->refc) == 0) {
@@ -949,8 +927,7 @@ channel_unbuf_recv_or_add_waiter_(
             ch_sem_post_(w1->sem);
             return CH_OK;
         }
-        ch_sem_init_(sem, 0, 0);
-        *w = channel_waitq_push_(&c->recvq, sem, NULL, CH_SEL_NIL_, elt);
+        channel_waitq_push_(&c->recvq, w);
         ch_mutex_unlock_(&c->lock);
         return CH_WBLOCK;
     }
@@ -959,17 +936,17 @@ channel_unbuf_recv_or_add_waiter_(
 inline channel_rc
 channel_unbuf_recv_(channel_unbuf_ *c, void *elt) {
     ch_sem_ sem;
-    channel_waiter_ *w;
-    channel_rc rc = channel_unbuf_recv_or_add_waiter_(c, elt, &sem, &w);
+    ch_sem_init_(&sem, 0, 0);
+    channel_waiter_unbuf_ w = {.sem = &sem, .sel_id = CH_SEL_NIL_, .elt = elt};
+    channel_rc rc =
+        channel_unbuf_recv_or_add_waiter_(c, elt, (channel_waiter_ *)&w);
     if (rc != CH_WBLOCK) {
         return rc;
     }
 
     ch_sem_wait_(&sem);
-    rc = w->unbuf.closed ? CH_CLOSED : CH_OK;
     ch_sem_destroy_(&sem);
-    free(w);
-    return rc;
+    return w.closed ? CH_CLOSED : CH_OK;
 }
 
 /* Blocking receives block on buffered channels if the buffer is empty and
@@ -994,8 +971,7 @@ channel_add_timeout_(uint64_t timeout) {
     struct timespec ts;
     clock_gettime(CLOCK_REALTIME, &ts);
     ts.tv_nsec += (timeout % 1000) * 1000000;
-    ts.tv_sec += ts.tv_nsec / 1000000000 +
-            ((timeout - (timeout % 1000)) / 1000);
+    ts.tv_sec += (ts.tv_nsec / 1000000000) + (timeout / 1000);
     ts.tv_nsec %= 1000000000;
 #endif
     return ts;
@@ -1003,41 +979,44 @@ channel_add_timeout_(uint64_t timeout) {
 
 inline channel_rc
 channel_buf_timedsend_(channel_buf_ *c, void *elt, ch_timespec_ *timeout) {
+    ch_sem_ sem;
+    ch_sem_init_(&sem, 0, 0);
+    channel_waiter_buf_ w = {.sem = &sem, .sel_id = CH_SEL_NIL_};
+
     for ( ; ; ) {
-        ch_sem_ sem;
-        channel_waiter_ *w;
-        channel_rc rc = channel_buf_send_or_add_waiter_(c, elt, &sem, &w);
+        channel_rc rc =
+            channel_buf_send_or_add_waiter_(c, elt, (channel_waiter_ *)&w);
         if (rc != CH_WBLOCK) {
+            ch_sem_destroy_(&sem);
             return rc;
         }
 
         if (ch_sem_timedwait_(&sem, timeout) != 0) {
             ch_mutex_lock_(&c->lock);
-            bool onqueue = channel_waitq_remove_(&c->sendq, w);
+            bool onqueue =
+                channel_waitq_remove_(&c->sendq, (channel_waiter_ *)&w);
             ch_mutex_unlock_(&c->lock);
             if (!onqueue) {
-                ch_sem_wait_(w->buf.sem);
+                ch_sem_wait_(w.sem);
                 channel_rc rc = channel_buf_trysend_(c, elt);
                 if (rc != CH_WBLOCK) {
                     ch_sem_destroy_(&sem);
-                    free(w);
                     return rc;
                 }
             }
             ch_sem_destroy_(&sem);
-            free(w);
             return CH_WBLOCK;
         }
-        ch_sem_destroy_(&sem);
-        free(w);
     }
 }
 
 inline channel_rc
 channel_unbuf_timedsend_(channel_unbuf_ *c, void *elt, ch_timespec_ *timeout) {
     ch_sem_ sem;
-    channel_waiter_ *w;
-    channel_rc rc = channel_unbuf_send_or_add_waiter_(c, elt, &sem, &w);
+    ch_sem_init_(&sem, 0, 0);
+    channel_waiter_unbuf_ w = {.sem = &sem, .sel_id = CH_SEL_NIL_, .elt = elt};
+    channel_rc rc =
+        channel_unbuf_send_or_add_waiter_(c, elt, (channel_waiter_ *)&w);
     if (rc != CH_WBLOCK) {
         return rc;
     }
@@ -1047,19 +1026,16 @@ channel_unbuf_timedsend_(channel_unbuf_ *c, void *elt, ch_timespec_ *timeout) {
 
     if (ch_sem_timedwait_(&sem, timeout) != 0) {
         ch_mutex_lock_(&c->lock);
-        bool onqueue = channel_waitq_remove_(&c->sendq, w);
+        bool onqueue = channel_waitq_remove_(&c->sendq, (channel_waiter_ *)&w);
         ch_mutex_unlock_(&c->lock);
         if (onqueue) {
-            rc = CH_WBLOCK;
-            goto cleanup;
+            ch_sem_destroy_(&sem);
+            return CH_WBLOCK;
         }
-        ch_sem_wait_(w->unbuf.sem);
+        ch_sem_wait_(w.sem);
     }
-    rc = w->unbuf.closed ? CH_CLOSED : CH_OK;
-cleanup:
     ch_sem_destroy_(&sem);
-    free(w);
-    return rc;
+    return w.closed ? CH_CLOSED : CH_OK;
 }
 
 /* Timed sends fail on buffered channels if the channel is full for the
@@ -1078,60 +1054,60 @@ channel_timedsend(channel *c, void *elt, uint64_t timeout, size_t eltsize) {
 
 inline channel_rc
 channel_buf_timedrecv_(channel_buf_ *c, void *elt, ch_timespec_ *timeout) {
+    ch_sem_ sem;
+    ch_sem_init_(&sem, 0, 0);
+    channel_waiter_buf_ w = {.sem = &sem, .sel_id = CH_SEL_NIL_};
+
     for ( ; ; ) {
-        ch_sem_ sem;
-        channel_waiter_ *w;
-        channel_rc rc = channel_buf_recv_or_add_waiter_(c, elt, &sem, &w);
+        channel_rc rc =
+            channel_buf_recv_or_add_waiter_(c, elt, (channel_waiter_ *)&w);
         if (rc != CH_WBLOCK) {
+            ch_sem_destroy_(&sem);
             return rc;
         }
 
         if (ch_sem_timedwait_(&sem, timeout) != 0) {
             ch_mutex_lock_(&c->lock);
-            bool onqueue = channel_waitq_remove_(&c->recvq, w);
+            bool onqueue =
+                channel_waitq_remove_(&c->recvq, (channel_waiter_ *)&w);
             ch_mutex_unlock_(&c->lock);
             if (!onqueue) {
-                ch_sem_wait_(w->buf.sem);
+                ch_sem_wait_(w.sem);
                 channel_rc rc = channel_buf_tryrecv_(c, elt);
                 if (rc != CH_WBLOCK) {
                     ch_sem_destroy_(&sem);
-                    free(w);
                     return rc;
                 }
             }
             ch_sem_destroy_(&sem);
-            free(w);
             return CH_WBLOCK;
         }
-        ch_sem_destroy_(&sem);
-        free(w);
     }
 }
 
 inline channel_rc
 channel_unbuf_timedrecv_(channel_unbuf_ *c, void *elt, ch_timespec_ *timeout) {
     ch_sem_ sem;
-    channel_waiter_ *w;
-    channel_rc rc = channel_unbuf_recv_or_add_waiter_(c, elt, &sem, &w);
+    ch_sem_init_(&sem, 0, 0);
+    channel_waiter_unbuf_ w = {.sem = &sem, .sel_id = CH_SEL_NIL_, .elt = elt};
+    channel_rc rc =
+        channel_unbuf_recv_or_add_waiter_(c, elt, (channel_waiter_ *)&w);
     if (rc != CH_WBLOCK) {
         return rc;
     }
 
     if (ch_sem_timedwait_(&sem, timeout) != 0) {
         ch_mutex_lock_(&c->lock);
-        bool onqueue = channel_waitq_remove_(&c->recvq, w);
+        bool onqueue = channel_waitq_remove_(&c->recvq, (channel_waiter_*)&w);
         ch_mutex_unlock_(&c->lock);
         if (onqueue) {
-            rc = CH_WBLOCK;
-            goto cleanup;
+            ch_sem_destroy_(&sem);
+            return CH_WBLOCK;
         }
-        ch_sem_wait_(w->unbuf.sem);
+        ch_sem_wait_(w.sem);
     }
-    rc = w->unbuf.closed ? CH_CLOSED : CH_OK;
-cleanup:
     ch_sem_destroy_(&sem);
-    free(w);
-    return rc;
+    return w.closed ? CH_CLOSED : CH_OK;
 }
 
 /* Timed receives fail on buffered channels if the channel is empty for the
@@ -1251,12 +1227,19 @@ channel_select_ready_or_wait_(
             continue;
         }
 
-        void *elt = cc->c->hdr.cap > 0 ? NULL : cc->elt;
+        if (cc->c->hdr.cap > 0) {
+            cc->waiter = calloc(1, sizeof(cc->waiter->buf));
+        } else {
+            cc->waiter = calloc(1, sizeof(cc->waiter->unbuf));
+            cc->waiter->unbuf.elt = cc->elt;
+        }
+        cc->waiter->hdr.sem = &s->sem;
+        cc->waiter->hdr.sel_state = state;
+        cc->waiter->hdr.sel_id = (i + offset) % s->len;
         channel_waiter_ *_Atomic *waitq = cc->op == CH_SEND ?
                 &cc->c->hdr.sendq : &cc->c->hdr.recvq;
         ch_mutex_lock_(&cc->c->hdr.lock);
-        cc->waiter = channel_waitq_push_(
-            waitq, &s->sem, state, (i + offset) % s->len, elt);
+        channel_waitq_push_(waitq, cc->waiter);
         if (channel_select_ready_(cc->c, cc->op)) {
             channel_waitq_remove_(waitq, cc->waiter);
             ch_mutex_unlock_(&cc->c->hdr.lock);
