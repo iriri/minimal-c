@@ -35,13 +35,16 @@ length and capacity.
 `vec_drop` deallocates all resources associated with the vector and returns
 `NULL`.
 
-#### vec_shrink
+#### vec_shrink / vec_trim
 ```
 void vec_shrink(vector(T) *v)
+
+void vec_trim(vector(T) *v)
 ```
-Shrinks the allocation of the vector to twice its length if it is currently
-more than 75% empty. Does nothing otherwise. This is the only way to shrink the
-allocation of the vector–it never shrinks itself automatically.
+`vec_shrink` shrinks the allocation of the vector to twice its length if it is
+currently more than 75% empty. It does nothing otherwise. `vec_trim` shrinks
+the allocation of the vector to exactly its length. These are the only way to
+shrink the allocation of the vector–it never shrinks itself automatically.
 
 #### vec_len
 ```

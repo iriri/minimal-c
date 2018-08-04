@@ -39,6 +39,7 @@
 #define vec_make(T, len, cap) ((vector(T) *)vector_make(sizeof(T), len, cap))
 #define vec_drop(v) vector_drop(&v->hdr)
 #define vec_shrink(v) vector_shrink(&v->hdr, sizeof(*v->vec.arr))
+#define vec_trim(v) vector_trim(&v->hdr, sizeof(*v->vec.arr))
 
 #define vec_len(v) (v->vec.len)
 #define vec_arr(v) (v->vec.arr)
@@ -62,8 +63,9 @@
     extern inline void vector_assert_( \
         const char *, unsigned, const char *) __attribute__((noreturn)); \
     extern inline void *vector_make(size_t, size_t, size_t); \
-    extern inline void vector_shrink(vector_hdr_ *, size_t); \
     extern inline void *vector_drop(vector_hdr_ *); \
+    extern inline void vector_shrink(vector_hdr_ *, size_t); \
+    extern inline void vector_trim(vector_hdr_ *, size_t); \
     extern inline void vector_grow_(vector_hdr_ *, size_t); \
     extern inline void vector_concat(vector_hdr_ *, vector_hdr_ *, size_t); \
     extern inline void vector_remove(vector_hdr_ *, size_t, size_t)
@@ -159,6 +161,13 @@ vector_make(size_t eltsize, size_t len, size_t cap) {
     return v;
 }
 
+inline void *
+vector_drop(vector_hdr_ *v) {
+    free(v->arr);
+    free(v);
+    return NULL;
+}
+
 inline void
 vector_shrink(vector_hdr_ *v, size_t eltsize) {
     if (v->len * 4 > v->cap) {
@@ -167,11 +176,12 @@ vector_shrink(vector_hdr_ *v, size_t eltsize) {
     vec_assert_((v->arr = realloc(v->arr, (v->cap = 2 * v->len) * eltsize)));
 }
 
-inline void *
-vector_drop(vector_hdr_ *v) {
-    free(v->arr);
-    free(v);
-    return NULL;
+inline void
+vector_trim(vector_hdr_ *v, size_t eltsize) {
+    if (v->len == v->cap) {
+        return;
+    }
+    vec_assert_((v->arr = realloc(v->arr, (v->cap = v->len) * eltsize)));
 }
 
 inline void

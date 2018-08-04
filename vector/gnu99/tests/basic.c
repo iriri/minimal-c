@@ -55,6 +55,8 @@ main(void) {
     vec_remove(v, vec_find(v, 1));
     vec_shrink(v);
     assert(v->vec.cap == 4);
+    vec_trim(v);
+    assert(v->vec.cap == 2);
     int via3[] = {2, 4};
     verify(v, via3, 2);
     vec_index(v, 0) = 1;

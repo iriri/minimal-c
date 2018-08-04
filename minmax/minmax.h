@@ -63,8 +63,8 @@ typedef int (*minmax_cmpfn)(void *restrict, void *restrict);
         const char *, unsigned, const char *) __attribute__((noreturn)); \
     extern inline minmax *minmax_make( \
         size_t, size_t, minmax_cmpfn); \
-    extern inline void minmax_shrink(minmax *); \
     extern inline minmax *minmax_drop(minmax *); \
+    extern inline void minmax_shrink(minmax *); \
     extern inline void *minmax_push_(minmax *, size_t); \
     extern inline size_t minmax_parent_(size_t); \
     extern inline bool minmax_level_type_max_(size_t); \
@@ -127,6 +127,14 @@ minmax_make(size_t eltsize, size_t cap, minmax_cmpfn cmpfn) {
     return m;
 }
 
+/* Deallocates all resources associated with the heap and returns `NULL`. */
+inline minmax *
+minmax_drop(minmax *m) {
+    free(m->heap);
+    free(m);
+    return NULL;
+}
+
 /* Shrinks the allocation of the heap to twice its length if it is currently
  * more than 75% empty. Does nothing otherwise. This is the only way to shrink
  * the allocation of the heap--it never shrinks itself automatically. */
@@ -137,14 +145,6 @@ minmax_shrink(minmax *m) {
     }
     mm_assert_((m->heap = realloc(
         m->heap, (m->cap = 2 * m->len) * m->eltsize)));
-}
-
-/* Deallocates all resources associated with the heap and returns `NULL`. */
-inline minmax *
-minmax_drop(minmax *m) {
-    free(m->heap);
-    free(m);
-    return NULL;
 }
 
 inline void *

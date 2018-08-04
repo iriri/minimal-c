@@ -19,6 +19,7 @@ typedef struct vector vector;
 #define vec_make(T, len, cap) vector_make(sizeof(T), len, cap)
 #define vec_drop(v) vector_drop(v)
 #define vec_shrink(v) vector_shrink(v)
+#define vec_trim(v) vector_trim(v)
 
 #define vec_len(v) (v->len)
 #define vec_arr(v, T) ((T *)v->arr)
@@ -49,8 +50,9 @@ typedef struct vector vector;
     extern inline void vector_assert_( \
         const char *, unsigned, const char *) __attribute__((noreturn)); \
     extern inline vector *vector_make(size_t, size_t, size_t); \
-    extern inline void vector_shrink(vector *); \
     extern inline vector *vector_drop(vector *); \
+    extern inline void vector_shrink(vector *); \
+    extern inline void vector_trim(vector *); \
     extern inline void *vector_index(vector *, size_t, size_t); \
     extern inline void *vector_push(vector *, size_t); \
     extern inline bool vector_peek(vector *, size_t, void *, bool); \
@@ -84,6 +86,13 @@ vector_make(size_t eltsize, size_t len, size_t cap) {
     return v;
 }
 
+inline vector *
+vector_drop(vector *v) {
+    free(v->arr);
+    free(v);
+    return NULL;
+}
+
 inline void
 vector_shrink(vector *v) {
     if (v->len * 4 > v->cap) {
@@ -93,11 +102,12 @@ vector_shrink(vector *v) {
         v->arr, (v->cap = 2 * v->len) * v->eltsize)));
 }
 
-inline vector *
-vector_drop(vector *v) {
-    free(v->arr);
-    free(v);
-    return NULL;
+inline void
+vector_trim(vector *v) {
+    if (v->len == v->cap) {
+        return;
+    }
+    vec_assert_((v->arr = realloc(v->arr, (v->cap = v->len) * v->eltsize)));
 }
 
 inline void *
