@@ -104,50 +104,36 @@ typedef enum channel_op {
     extern inline channel *channel_drop(channel *); \
     extern inline channel *channel_dup(channel *); \
     extern inline void channel_close(channel *); \
-    extern inline channel_rc channel_buf_trysend_res_cell_( \
-        channel_buf_ *, char **, uint32_t *); \
     extern inline void channel_buf_waitq_shift_( \
         channel_waiter_ *_Atomic *, ch_mutex_ *); \
     extern inline channel_rc channel_buf_trysend_(channel_buf_ *, void *); \
-    extern inline channel_rc channel_unbuf_trysend_try_( \
-        channel_unbuf_ *, channel_waiter_unbuf_ **); \
-    extern inline channel_rc channel_unbuf_trysend_( \
-        channel_unbuf_ *, void *); \
+    extern inline channel_rc channel_unbuf_try_( \
+        channel_unbuf_ *, void *, channel_waiter_ *_Atomic *); \
     extern inline channel_rc channel_trysend(channel *, void *, size_t); \
-    extern inline channel_rc channel_buf_tryrecv_res_cell_( \
-        channel_buf_ *, char **, uint32_t *); \
     extern inline channel_rc channel_buf_tryrecv_(channel_buf_ *, void *); \
-    extern inline channel_rc channel_unbuf_tryrecv_( \
-        channel_unbuf_ *, void *); \
     extern inline channel_rc channel_tryrecv(channel *, void *, size_t); \
-    extern inline channel_rc channel_buf_forcesend_res_cell_( \
-        channel_buf_ *, char **, uint32_t *); \
     extern inline channel_rc channel_forcesend(channel *, void *, size_t); \
     extern inline channel_rc channel_buf_send_or_add_waiter_( \
         channel_buf_ *, void *, channel_waiter_buf_ *); \
     extern inline channel_rc channel_buf_send_(channel_buf_ *, void *); \
-    extern inline channel_rc channel_unbuf_send_or_add_waiter_( \
-        channel_unbuf_ *, void *, channel_waiter_unbuf_ *); \
-    extern inline channel_rc channel_unbuf_send_(channel_unbuf_ *, void *); \
+    extern inline channel_rc channel_unbuf_try_or_add_waiter_( \
+        channel_unbuf_ *, void *, channel_waiter_unbuf_ *, channel_op); \
+    extern inline channel_rc channel_unbuf_do_( \
+        channel_unbuf_ *, void *, channel_op); \
     extern inline channel_rc channel_send(channel *, void *, size_t); \
     extern inline channel_rc channel_buf_recv_or_add_waiter_( \
         channel_buf_ *, void *, channel_waiter_buf_ *); \
     extern inline channel_rc channel_buf_recv_(channel_buf_ *, void *); \
-    extern inline channel_rc channel_unbuf_recv_or_add_waiter_( \
-        channel_unbuf_ *, void *, channel_waiter_unbuf_ *); \
-    extern inline channel_rc channel_unbuf_recv_(channel_unbuf_ *, void *); \
     extern inline channel_rc channel_recv(channel *, void *, size_t); \
     extern inline ch_timespec_ channel_add_timeout_(uint64_t); \
     extern inline channel_rc channel_buf_timedsend_( \
         channel_buf_ *, void *, ch_timespec_ *); \
-    extern inline channel_rc channel_unbuf_timedsend_( \
-        channel_unbuf_ *, void *, ch_timespec_ *); \
+    extern inline channel_rc channel_unbuf_timed_( \
+        channel_unbuf_ *, void *, ch_timespec_ *, channel_op); \
     extern inline channel_rc channel_timedsend( \
         channel *, void *, uint64_t, size_t); \
     extern inline channel_rc channel_buf_timedrecv_( \
         channel_buf_ *, void *, ch_timespec_ *); \
-    extern inline channel_rc channel_unbuf_timedrecv_( \
-        channel_unbuf_ *, void *, ch_timespec_ *); \
     extern inline channel_rc channel_timedrecv( \
         channel *, void *, uint64_t, size_t); \
     extern inline channel_set *channel_set_make(uint32_t); \
@@ -163,15 +149,6 @@ typedef enum channel_op {
     extern inline void channel_select_remove_waiters_( \
         channel_set *, uint32_t); \
     extern inline uint32_t channel_select(channel_set *, uint64_t)
-
-/* `CHANNEL_PAD_CACHE_LINES` can be defined to enable cache line padding,
- * improving performance in highly parallel workloads. */
-#ifdef CHANNEL_PAD_CACHE_LINES
-#define CH_CACHE_LINE_ 64
-#define CH_PAD_(id, size) char pad##id[size];
-#else
-#define CH_PAD_(id, size)
-#endif
 
 /* ---------------------------- Implementation ---------------------------- */
 #ifdef _POSIX_THREADS // Linux, OS X, and Cygwin (and BSDs--untested, however)
@@ -278,16 +255,14 @@ typedef struct channel_hdr_ {
 typedef union channel_aun64_ {
     _Atomic uint64_t u64;
     struct {
-        _Atomic uint32_t index;
-        _Atomic uint32_t lap;
+        _Atomic uint32_t index, lap;
     } u32;
 } channel_aun64_;
 
 typedef union channel_un64_ {
     uint64_t u64;
     struct {
-        uint32_t index;
-        uint32_t lap;
+        uint32_t index, lap;
     } u32;
 } channel_un64_;
 
@@ -298,9 +273,9 @@ typedef struct channel_buf_ {
     channel_waiter_ *_Atomic sendq, *_Atomic recvq;
     ch_mutex_ lock;
     channel_aun64_ write;
-        CH_PAD_(0, CH_CACHE_LINE_ - sizeof(channel_aun64_))
+    char pad[64 - sizeof(channel_aun64_)]; // cache line padding
     channel_aun64_ read;
-        CH_PAD_(1, CH_CACHE_LINE_ - sizeof(channel_aun64_))
+    char pad1[64 - sizeof(channel_aun64_)];
     char buf[]; // channel_cell_<T> buf[];
 } channel_buf_;
 
@@ -465,6 +440,9 @@ channel_close(channel *c) {
     ch_mutex_lock_(&c->hdr.lock);
     if (c->hdr.cap > 0) {
         channel_waiter_buf_ *w;
+        /* UBSan complains about union member accesses when the pointer is
+         * `NULL` but I don't think I care since we aren't actually
+         * dereferencing the pointer. */
         while ((w = &channel_waitq_shift_(&c->buf.sendq)->buf)) {
             ch_sem_post_(w->sem);
         }
@@ -483,32 +461,6 @@ channel_close(channel *c) {
         }
     }
     ch_mutex_unlock_(&c->hdr.lock);
-}
-
-inline channel_rc
-channel_buf_trysend_res_cell_(channel_buf_ *c, char **cell, uint32_t *lap) {
-    for (int i = 0; ; ) {
-        if (ch_load_acq_(&c->refc) == 0) {
-            return CH_CLOSED;
-        }
-
-        channel_un64_ write = {ch_load_acq_(&c->write.u64)};
-        *cell = c->buf + (write.u32.index * ch_cellsize_(c->eltsize));
-        *lap = ch_load_acq_(ch_cell_lap_(*cell));
-        if (write.u32.lap != *lap) {
-            if (i++ < 4) { // Improves benchmarks; harmful in normal usage?
-                sched_yield();
-                continue;
-            }
-            return CH_WBLOCK;
-        }
-
-        uint64_t write1 = write.u32.index + 1 < c->cap ?
-                write.u64 + 1 : (uint64_t)(write.u32.lap + 2) << 32;
-        if (ch_cas_weak_(&c->write.u64, &write.u64, write1)) {
-            return CH_OK;
-        }
-    }
 }
 
 inline void
@@ -535,26 +487,42 @@ channel_buf_waitq_shift_(channel_waiter_ *_Atomic *waitq, ch_mutex_ *lock) {
 
 inline channel_rc
 channel_buf_trysend_(channel_buf_ *c, void *elt) {
-    char *cell;
-    uint32_t lap;
-    channel_rc rc = channel_buf_trysend_res_cell_(c, &cell, &lap);
-    if (rc != CH_OK) {
-        return rc;
-    }
+    for (int i = 0; ; ) {
+        if (ch_load_acq_(&c->refc) == 0) {
+            return CH_CLOSED;
+        }
 
-    memcpy(ch_cell_elt_(cell), elt, c->eltsize);
-    ch_store_seq_cst_(ch_cell_lap_(cell), lap + 1);
-    channel_buf_waitq_shift_(&c->recvq, &c->lock);
-    return CH_OK;
+        channel_un64_ write = {ch_load_acq_(&c->write.u64)};
+        char *cell = c->buf + (write.u32.index * ch_cellsize_(c->eltsize));
+        uint32_t lap = ch_load_acq_(ch_cell_lap_(cell));
+        if (write.u32.lap != lap) {
+            if (i++ < 4) { // Improves benchmarks; harmful in normal usage?
+                sched_yield();
+                continue;
+            }
+            return CH_WBLOCK;
+        }
+
+        uint64_t write1 = write.u32.index + 1 < c->cap ?
+                write.u64 + 1 : (uint64_t)(write.u32.lap + 2) << 32;
+        if (ch_cas_weak_(&c->write.u64, &write.u64, write1)) {
+            memcpy(ch_cell_elt_(cell), elt, c->eltsize);
+            ch_store_seq_cst_(ch_cell_lap_(cell), lap + 1);
+            channel_buf_waitq_shift_(&c->recvq, &c->lock);
+            return CH_OK;
+        }
+    }
 }
 
 inline channel_rc
-channel_unbuf_trysend_try_(channel_unbuf_ *c, channel_waiter_unbuf_ **w) {
+channel_unbuf_try_(
+    channel_unbuf_ *c, void *elt, channel_waiter_ *_Atomic *waitq
+) {
     for ( ; ; ) {
         if (ch_load_acq_(&c->refc) == 0) {
             return CH_CLOSED;
         }
-        if (!ch_load_acq_(&c->recvq)) {
+        if (!ch_load_acq_(waitq)) {
             return CH_WBLOCK;
         }
 
@@ -563,33 +531,26 @@ channel_unbuf_trysend_try_(channel_unbuf_ *c, channel_waiter_unbuf_ **w) {
             ch_mutex_unlock_(&c->lock);
             return CH_CLOSED;
         }
-        *w = &channel_waitq_shift_(&c->recvq)->unbuf;
+        channel_waiter_unbuf_ *w = &channel_waitq_shift_(waitq)->unbuf;
         ch_mutex_unlock_(&c->lock);
-        if (!*w) {
+        if (!w) {
             return CH_WBLOCK;
         }
-        if ((*w)->sel_state) {
+        if (w->sel_state) {
             uint32_t magic = CH_SEL_MAGIC_;
-            if (!ch_cas_strong_((*w)->sel_state, &magic, (*w)->sel_id)) {
-                ch_store_rel_(&(*w)->ref, false);
+            if (!ch_cas_strong_(w->sel_state, &magic, w->sel_id)) {
+                ch_store_rel_(&w->ref, false);
                 continue;
             }
         }
+        if (waitq == &c->recvq) {
+            memcpy(w->elt, elt, c->eltsize);
+        } else {
+            memcpy(elt, w->elt, c->eltsize);
+        }
+        ch_sem_post_(w->sem);
         return CH_OK;
     }
-}
-
-inline channel_rc
-channel_unbuf_trysend_(channel_unbuf_ *c, void *elt) {
-    channel_waiter_unbuf_ *w;
-    channel_rc rc = channel_unbuf_trysend_try_(c, &w);
-    if (rc != CH_OK) {
-        return rc;
-    }
-
-    memcpy(w->elt, elt, c->eltsize);
-    ch_sem_post_(w->sem);
-    return CH_OK;
 }
 
 /* Nonblocking sends fail on buffered channels if the channel is full and fail
@@ -598,19 +559,18 @@ channel_unbuf_trysend_(channel_unbuf_ *c, void *elt) {
 inline channel_rc
 channel_trysend(channel *c, void *elt, size_t eltsize) {
     ch_assert_(eltsize == c->hdr.eltsize);
-    if (c->hdr.cap > 0) {
-        return channel_buf_trysend_(&c->buf, elt);
-    }
-    return channel_unbuf_trysend_(&c->unbuf, elt);
+    return c->hdr.cap > 0 ?
+            channel_buf_trysend_(&c->buf, elt) :
+            channel_unbuf_try_(&c->unbuf, elt, &c->unbuf.recvq);
 }
 
 inline channel_rc
-channel_buf_tryrecv_res_cell_(channel_buf_ *c, char **cell, uint32_t *lap) {
+channel_buf_tryrecv_(channel_buf_ *c, void *elt) {
     for (int i = 0; ; ) {
         channel_un64_ read = {ch_load_acq_(&c->read.u64)};
-        *cell = c->buf + (read.u32.index * ch_cellsize_(c->eltsize));
-        *lap = ch_load_acq_(ch_cell_lap_(*cell));
-        if (read.u32.lap != *lap) {
+        char *cell = c->buf + (read.u32.index * ch_cellsize_(c->eltsize));
+        uint32_t lap = ch_load_acq_(ch_cell_lap_(cell));
+        if (read.u32.lap != lap) {
             if (ch_load_acq_(&c->refc) == 0) {
                 return CH_CLOSED;
             }
@@ -624,56 +584,11 @@ channel_buf_tryrecv_res_cell_(channel_buf_ *c, char **cell, uint32_t *lap) {
         uint64_t read1 = read.u32.index + 1 < c->cap ?
                 read.u64 + 1 : (uint64_t)(read.u32.lap + 2) << 32;
         if (ch_cas_weak_(&c->read.u64, &read.u64, read1)) {
+            memcpy(elt, ch_cell_elt_(cell), c->eltsize);
+            ch_store_seq_cst_(ch_cell_lap_(cell), lap + 1);
+            channel_buf_waitq_shift_(&c->sendq, &c->lock);
             return CH_OK;
         }
-    }
-}
-
-inline channel_rc
-channel_buf_tryrecv_(channel_buf_ *c, void *elt) {
-    char *cell;
-    uint32_t lap;
-    channel_rc rc = channel_buf_tryrecv_res_cell_(c, &cell, &lap);
-    if (rc != CH_OK) {
-        return rc;
-    }
-
-    memcpy(elt, ch_cell_elt_(cell), c->eltsize);
-    ch_store_seq_cst_(ch_cell_lap_(cell), lap + 1);
-    channel_buf_waitq_shift_(&c->sendq, &c->lock);
-    return CH_OK;
-}
-
-inline channel_rc
-channel_unbuf_tryrecv_(channel_unbuf_ *c, void *elt) {
-    for ( ; ; ) {
-        if (ch_load_acq_(&c->refc) == 0) {
-            return CH_CLOSED;
-        }
-        if (!ch_load_acq_(&c->sendq)) {
-            return CH_WBLOCK;
-        }
-
-        ch_mutex_lock_(&c->lock);
-        if (ch_load_acq_(&c->refc) == 0) {
-            ch_mutex_unlock_(&c->lock);
-            return CH_CLOSED;
-        }
-        channel_waiter_unbuf_ *w = &channel_waitq_shift_(&c->sendq)->unbuf;
-        ch_mutex_unlock_(&c->lock);
-        if (!w) {
-            return CH_WBLOCK;
-        }
-        if (w->sel_state) {
-            uint32_t magic = CH_SEL_MAGIC_;
-            if (!ch_cas_strong_(w->sel_state, &magic, w->sel_id)) {
-                ch_store_rel_(&w->ref, false);
-                continue;
-            }
-        }
-        memcpy(elt, w->elt, c->eltsize);
-        ch_sem_post_(w->sem);
-        return CH_OK;
     }
 }
 
@@ -684,45 +599,9 @@ channel_unbuf_tryrecv_(channel_unbuf_ *c, void *elt) {
 inline channel_rc
 channel_tryrecv(channel *c, void *elt, size_t eltsize) {
     ch_assert_(eltsize == c->hdr.eltsize);
-    if (c->hdr.cap > 0) {
-        return channel_buf_tryrecv_(&c->buf, elt);
-    }
-    return channel_unbuf_tryrecv_(&c->unbuf, elt);
-}
-
-inline channel_rc
-channel_buf_forcesend_res_cell_(channel_buf_ *c, char **cell, uint32_t *lap) {
-    for (bool full = false; ; ) {
-        if (ch_load_acq_(&c->refc) == 0) {
-            return CH_CLOSED;
-        }
-
-        channel_un64_ write = {ch_load_acq_(&c->write.u64)};
-        *cell = c->buf + (write.u32.index * ch_cellsize_(c->eltsize));
-        *lap = ch_load_acq_(ch_cell_lap_(*cell));
-        if (write.u32.lap != *lap) {
-            full = true;
-            channel_un64_ read = {ch_load_acq_(&c->read.u64)};
-            char *cell1 = c->buf + (read.u32.index * ch_cellsize_(c->eltsize));
-            uint32_t lap1 = ch_load_acq_(ch_cell_lap_(cell1));
-            if (read.u32.lap != lap1) {
-                continue;
-            }
-
-            uint64_t read1 = read.u32.index + 1 < c->cap ?
-                    read.u64 + 1 : (uint64_t)(read.u32.lap + 2) << 32;
-            if (ch_cas_weak_(&c->read.u64, &read.u64, read1)) {
-                ch_store_seq_cst_(ch_cell_lap_(cell1), lap1 + 1);
-            }
-            continue;
-        }
-
-        uint64_t write1 = write.u32.index + 1 < c->cap ?
-                write.u64 + 1 : (uint64_t)(write.u32.lap + 2) << 32;
-        if (ch_cas_weak_(&c->write.u64, &write.u64, write1)) {
-            return full ? CH_WBLOCK : CH_OK;
-        }
-    }
+    return c->hdr.cap > 0 ?
+            channel_buf_tryrecv_(&c->buf, elt) :
+            channel_unbuf_try_(&c->unbuf, elt, &c->unbuf.sendq);
 }
 
 /* Forced sends on buffered channels do not block and overwrite the oldest
@@ -732,15 +611,42 @@ channel_buf_forcesend_res_cell_(channel_buf_ *c, char **cell, uint32_t *lap) {
 inline channel_rc
 channel_forcesend(channel *c, void *elt, size_t eltsize) {
     ch_assert_(eltsize == c->hdr.eltsize && c->hdr.cap > 0);
-    char *cell;
-    uint32_t lap;
-    channel_rc rc = channel_buf_forcesend_res_cell_(&c->buf, &cell, &lap);
-    if (rc != CH_CLOSED) {
-        memcpy(ch_cell_elt_(cell), elt, c->buf.eltsize);
-        ch_store_seq_cst_(ch_cell_lap_(cell), lap + 1);
-        channel_buf_waitq_shift_(&c->buf.recvq, &c->buf.lock);
+    for (bool full = false; ; ) {
+        if (ch_load_acq_(&c->buf.refc) == 0) {
+            return CH_CLOSED;
+        }
+
+        channel_un64_ write = {ch_load_acq_(&c->buf.write.u64)};
+        char *cell =
+            c->buf.buf + (write.u32.index * ch_cellsize_(c->buf.eltsize));
+        uint32_t lap = ch_load_acq_(ch_cell_lap_(cell));
+        if (write.u32.lap != lap) {
+            full = true;
+            channel_un64_ read = {ch_load_acq_(&c->buf.read.u64)};
+            char *cell1 =
+                c->buf.buf + (read.u32.index * ch_cellsize_(c->buf.eltsize));
+            uint32_t lap1 = ch_load_acq_(ch_cell_lap_(cell1));
+            if (read.u32.lap != lap1) {
+                continue;
+            }
+
+            uint64_t read1 = read.u32.index + 1 < c->buf.cap ?
+                    read.u64 + 1 : (uint64_t)(read.u32.lap + 2) << 32;
+            if (ch_cas_weak_(&c->buf.read.u64, &read.u64, read1)) {
+                ch_store_seq_cst_(ch_cell_lap_(cell1), lap1 + 1);
+            }
+            continue;
+        }
+
+        uint64_t write1 = write.u32.index + 1 < c->buf.cap ?
+                write.u64 + 1 : (uint64_t)(write.u32.lap + 2) << 32;
+        if (ch_cas_weak_(&c->buf.write.u64, &write.u64, write1)) {
+            memcpy(ch_cell_elt_(cell), elt, c->buf.eltsize);
+            ch_store_seq_cst_(ch_cell_lap_(cell), lap + 1);
+            channel_buf_waitq_shift_(&c->buf.recvq, &c->buf.lock);
+            return full ? CH_WBLOCK : CH_OK;
+        }
     }
-    return rc;
 }
 
 inline channel_rc
@@ -790,9 +696,18 @@ channel_buf_send_(channel_buf_ *c, void *elt) {
 }
 
 inline channel_rc
-channel_unbuf_send_or_add_waiter_(
-    channel_unbuf_ *c, void *elt, channel_waiter_unbuf_ *w
+channel_unbuf_try_or_add_waiter_(
+    channel_unbuf_ *c, void *elt, channel_waiter_unbuf_ *w, channel_op op
 ) {
+    channel_waiter_ *_Atomic *shiftq, *_Atomic *pushq;
+    if (op == CH_SEND) {
+        shiftq = &c->recvq;
+        pushq = &c->sendq;
+    } else {
+        shiftq = &c->sendq;
+        pushq = &c->recvq;
+    }
+
     for ( ; ; ) {
         if (ch_load_acq_(&c->refc) == 0) {
             return CH_CLOSED;
@@ -803,7 +718,7 @@ channel_unbuf_send_or_add_waiter_(
             ch_mutex_unlock_(&c->lock);
             return CH_CLOSED;
         }
-        channel_waiter_unbuf_ *w1 = &channel_waitq_shift_(&c->recvq)->unbuf;
+        channel_waiter_unbuf_ *w1 = &channel_waitq_shift_(shiftq)->unbuf;
         if (w1) {
             ch_mutex_unlock_(&c->lock);
             if (w1->sel_state) {
@@ -813,23 +728,28 @@ channel_unbuf_send_or_add_waiter_(
                     continue;
                 }
             }
-            memcpy(w1->elt, elt, c->eltsize);
+            if (op == CH_SEND) {
+                memcpy(w1->elt, elt, c->eltsize);
+            } else {
+                memcpy(elt, w1->elt, c->eltsize);
+            }
             ch_sem_post_(w1->sem);
             return CH_OK;
         }
-        channel_waitq_push_(&c->sendq, (channel_waiter_ *)w);
+        channel_waitq_push_(pushq, (channel_waiter_ *)w);
         ch_mutex_unlock_(&c->lock);
         return CH_WBLOCK;
     }
 }
 
 inline channel_rc
-channel_unbuf_send_(channel_unbuf_ *c, void *elt) {
+channel_unbuf_do_(channel_unbuf_ *c, void *elt, channel_op op) {
     ch_sem_ sem;
     ch_sem_init_(&sem, 0, 0);
     channel_waiter_unbuf_ w = {.sem = &sem, .sel_id = CH_SEL_NIL_, .elt = elt};
-    channel_rc rc = channel_unbuf_send_or_add_waiter_(c, elt, &w);
+    channel_rc rc = channel_unbuf_try_or_add_waiter_(c, elt, &w, op);
     if (rc != CH_WBLOCK) {
+        ch_sem_destroy_(&sem);
         return rc;
     }
 
@@ -844,10 +764,9 @@ channel_unbuf_send_(channel_unbuf_ *c, void *elt) {
 inline channel_rc
 channel_send(channel *c, void *elt, size_t eltsize) {
     ch_assert_(eltsize == c->hdr.eltsize);
-    if (c->hdr.cap > 0) {
-        return channel_buf_send_(&c->buf, elt);
-    }
-    return channel_unbuf_send_(&c->unbuf, elt);
+    return c->hdr.cap > 0 ?
+            channel_buf_send_(&c->buf, elt) :
+            channel_unbuf_do_(&c->unbuf, elt, CH_SEND);
 }
 
 inline channel_rc
@@ -896,65 +815,15 @@ channel_buf_recv_(channel_buf_ *c, void *elt) {
     }
 }
 
-inline channel_rc
-channel_unbuf_recv_or_add_waiter_(
-    channel_unbuf_ *c, void *elt, channel_waiter_unbuf_ *w
-) {
-    for ( ; ; ) {
-        if (ch_load_acq_(&c->refc) == 0) {
-            return CH_CLOSED;
-        }
-
-        ch_mutex_lock_(&c->lock);
-        if (ch_load_acq_(&c->refc) == 0) {
-            ch_mutex_unlock_(&c->lock);
-            return CH_CLOSED;
-        }
-        channel_waiter_unbuf_ *w1 = &channel_waitq_shift_(&c->sendq)->unbuf;
-        if (w1) {
-            ch_mutex_unlock_(&c->lock);
-            if (w1->sel_state) {
-                uint32_t magic = CH_SEL_MAGIC_;
-                if (!ch_cas_strong_(w1->sel_state, &magic, w1->sel_id)) {
-                    ch_store_rel_(&w1->ref, false);
-                    continue;
-                }
-            }
-            memcpy(elt, w1->elt, c->eltsize);
-            ch_sem_post_(w1->sem);
-            return CH_OK;
-        }
-        channel_waitq_push_(&c->recvq, (channel_waiter_ *)w);
-        ch_mutex_unlock_(&c->lock);
-        return CH_WBLOCK;
-    }
-}
-
-inline channel_rc
-channel_unbuf_recv_(channel_unbuf_ *c, void *elt) {
-    ch_sem_ sem;
-    ch_sem_init_(&sem, 0, 0);
-    channel_waiter_unbuf_ w = {.sem = &sem, .sel_id = CH_SEL_NIL_, .elt = elt};
-    channel_rc rc = channel_unbuf_recv_or_add_waiter_(c, elt, &w);
-    if (rc != CH_WBLOCK) {
-        return rc;
-    }
-
-    ch_sem_wait_(&sem);
-    ch_sem_destroy_(&sem);
-    return w.closed ? CH_CLOSED : CH_OK;
-}
-
 /* Blocking receives block on buffered channels if the buffer is empty and
  * block on unbuffered channels if there is no waiting sender. Returns `CH_OK`
  * on success or `CH_CLOSED` if the channel is closed. */
 inline channel_rc
 channel_recv(channel *c, void *elt, size_t eltsize) {
     ch_assert_(eltsize == c->hdr.eltsize);
-    if (c->hdr.cap > 0) {
-        return channel_buf_recv_(&c->buf, elt);
-    }
-    return channel_unbuf_recv_(&c->unbuf, elt);
+    return c->hdr.cap > 0 ?
+            channel_buf_recv_(&c->buf, elt) :
+            channel_unbuf_do_(&c->unbuf, elt, CH_RECV);
 }
 
 /* Unfortunately we have to use `CLOCK_REALTIME` as there is no way to use
@@ -1006,16 +875,16 @@ channel_buf_timedsend_(channel_buf_ *c, void *elt, ch_timespec_ *timeout) {
 }
 
 inline channel_rc
-channel_unbuf_timedsend_(channel_unbuf_ *c, void *elt, ch_timespec_ *timeout) {
+channel_unbuf_timed_(
+    channel_unbuf_ *c, void *elt, ch_timespec_ *timeout, channel_op op
+) {
     ch_sem_ sem;
     ch_sem_init_(&sem, 0, 0);
     channel_waiter_unbuf_ w = {.sem = &sem, .sel_id = CH_SEL_NIL_, .elt = elt};
-    channel_rc rc = channel_unbuf_send_or_add_waiter_(c, elt, &w);
+    channel_rc rc = channel_unbuf_try_or_add_waiter_(c, elt, &w, op);
     if (rc != CH_WBLOCK) {
+        ch_sem_destroy_(&sem);
         return rc;
-    }
-    if (ch_load_acq_(&c->refc) == 0) {
-        return CH_CLOSED;
     }
 
     if (ch_sem_timedwait_(&sem, timeout) != 0) {
@@ -1040,10 +909,9 @@ inline channel_rc
 channel_timedsend(channel *c, void *elt, uint64_t timeout, size_t eltsize) {
     ch_assert_(eltsize == c->hdr.eltsize);
     ch_timespec_ t = channel_add_timeout_(timeout);
-    if (c->hdr.cap > 0) {
-        return channel_buf_timedsend_(&c->buf, elt, &t);
-    }
-    return channel_unbuf_timedsend_(&c->unbuf, elt, &t);
+    return c->hdr.cap > 0 ?
+            channel_buf_timedsend_(&c->buf, elt, &t) :
+            channel_unbuf_timed_(&c->unbuf, elt, &t, CH_SEND);
 }
 
 inline channel_rc
@@ -1078,30 +946,6 @@ channel_buf_timedrecv_(channel_buf_ *c, void *elt, ch_timespec_ *timeout) {
     }
 }
 
-inline channel_rc
-channel_unbuf_timedrecv_(channel_unbuf_ *c, void *elt, ch_timespec_ *timeout) {
-    ch_sem_ sem;
-    ch_sem_init_(&sem, 0, 0);
-    channel_waiter_unbuf_ w = {.sem = &sem, .sel_id = CH_SEL_NIL_, .elt = elt};
-    channel_rc rc = channel_unbuf_recv_or_add_waiter_(c, elt, &w);
-    if (rc != CH_WBLOCK) {
-        return rc;
-    }
-
-    if (ch_sem_timedwait_(&sem, timeout) != 0) {
-        ch_mutex_lock_(&c->lock);
-        bool onqueue = channel_waitq_remove_(&c->recvq, (channel_waiter_*)&w);
-        ch_mutex_unlock_(&c->lock);
-        if (onqueue) {
-            ch_sem_destroy_(&sem);
-            return CH_WBLOCK;
-        }
-        ch_sem_wait_(w.sem);
-    }
-    ch_sem_destroy_(&sem);
-    return w.closed ? CH_CLOSED : CH_OK;
-}
-
 /* Timed receives fail on buffered channels if the channel is empty for the
  * duration of the timeout and fail on unbuffered channels if there is no
  * waiting sender for the duration of the timeout. Returns `CH_OK` on success,
@@ -1110,10 +954,9 @@ inline channel_rc
 channel_timedrecv(channel *c, void *elt, uint64_t timeout, size_t eltsize) {
     ch_assert_(eltsize == c->hdr.eltsize);
     ch_timespec_ t = channel_add_timeout_(timeout);
-    if (c->hdr.cap > 0) {
-        return channel_buf_timedrecv_(&c->buf, elt, &t);
-    }
-    return channel_unbuf_timedrecv_(&c->unbuf, elt, &t);
+    return c->hdr.cap > 0 ?
+            channel_buf_timedrecv_(&c->buf, elt, &t) :
+            channel_unbuf_timed_(&c->unbuf, elt, &t, CH_RECV);
 }
 
 /* Allocates and initializes a new channel set. `cap` is not a hard limit but a
