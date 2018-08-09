@@ -120,8 +120,9 @@ minmax_assert_(const char *file, unsigned line, const char *pred) {
  * other, respectively. */
 inline minmax *
 minmax_make(size_t eltsize, size_t cap, minmax_cmpfn cmpfn) {
+    mm_assert_(0 < cap && cap < SIZE_MAX / eltsize);
     minmax *m = malloc(sizeof(*m));
-    mm_assert_(cap > 0 && m);
+    mm_assert_(m);
     *m = (minmax) {malloc(cap * eltsize), eltsize, 0, cap, cmpfn};
     mm_assert_(m->heap);
     return m;
@@ -149,9 +150,11 @@ minmax_shrink(minmax *m) {
 
 inline void *
 minmax_push_(minmax *m, size_t eltsize) {
-    mm_assert_(eltsize == m->eltsize && m->len + 1 < SIZE_MAX);
+    mm_assert_(eltsize == m->eltsize);
     if (m->len == m->cap) {
-        mm_assert_((m->heap = realloc(m->heap, (m->cap *= 2) * eltsize)));
+        mm_assert_(m->cap < SIZE_MAX - m->cap &&
+                (m->cap *= 2) < SIZE_MAX / eltsize);
+        mm_assert_((m->heap = realloc(m->heap, m->cap * eltsize)));
     }
     return mm_elt_(m->len);
 }

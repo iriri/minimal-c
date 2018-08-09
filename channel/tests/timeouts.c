@@ -15,7 +15,7 @@ adder(void *arg) {
     unsigned long long sum = 0;
     while (ch_recv(chan, i) != CH_CLOSED) {
         sum += i;
-        usleep(10000);
+        usleep(1000);
     }
     unsigned long long *ret = malloc(sizeof(*ret));
     *ret = sum;
@@ -31,7 +31,7 @@ identity(void *arg) {
     unsigned id;
     assert(ch_recv(chani, id) == CH_OK);
     while (ch_send(chani, id) != CH_CLOSED) {
-        usleep(10000);
+        usleep(1000);
     }
     return NULL;
 }
@@ -47,7 +47,7 @@ main(void) {
     }
     int ok = 0, timedout = 0;
     for (int i = 1; i <= 10000; i++) {
-        if (ch_timedsend(chan, i, 1) == CH_OK) {
+        if (ch_timedsend(chan, i, 100) == CH_OK) {
             ok++;
         } else {
             timedout++;
@@ -71,7 +71,7 @@ main(void) {
     }
     ok = 0, timedout = 0;
     for (int i = 1; i <= 10000; i++) {
-        if (ch_timedsend(chan, i, 1) == CH_OK) {
+        if (ch_timedsend(chan, i, 100) == CH_OK) {
             ok++;
         } else {
             timedout++;
@@ -102,8 +102,8 @@ main(void) {
     }
     ok = timedout = 0;
     for (int i = 1; i <= 10000; i++) {
-        unsigned id = ch_select(set, 1);
-        if (id != CH_SEL_WBLOCK) {
+        uint32_t id = ch_timedselect(set, 100);
+        if (id != CH_WBLOCK) {
             ok++;
             assert(ir == id);
             stats[ir]++;

@@ -15,21 +15,16 @@ is substituted in, C99 support should be good enough.
 ```
 typedef union channel channel;
 typedef struct channel_set channel_set;
-typedef enum channel_rc channel_rc;
+typedef uint32_t channel_rc;
 typedef enum channel_op channel_op;
 ```
 
 ### Values
 #### Return codes
 ```
-enum channel_rc {
-    CH_OK,
-    CH_WBLOCK,
-    CH_CLOSED,
-};
-
-#define CH_SEL_WBLOCK (UINT32_MAX - 1)
-#define CH_SEL_CLOSED UINT32_MAX
+#define CH_OK 0
+#define CH_WBLOCK (UINT32_MAX - 1)
+#define CH_CLOSED UINT32_MAX
 ```
 
 #### Op codes
@@ -42,33 +37,35 @@ enum channel_op {
 ```
 
 ### Functions
-#### ch_make / ch_drop
+#### ch_make / ch_dup / ch_drop
 ```
 channel *ch_make(type T, uint32_t cap)
+
+channel *ch_dup(channel *c)
 
 channel *ch_drop(channel *c)
 ```
 `ch_make` allocates and initializes a new channel. If the capacity is 0 then
 the channel is unbuffered. Otherwise the channel is buffered.
 
-`ch_drop` deallocates all resources associated with the channel and returns
+`ch_dup` increments the reference count of the channel and returns the channel.
+
+`ch_drop` deallocates all resources associated with the channel if the caller
+has the last reference. Decrements the reference count otherwise. Returns
 `NULL`.
 
-#### ch_dup
+#### ch open / ch_close
 ```
-channel *ch_dup(channel *c)
-```
-Increases the reference count of the channel and returns it. Intended to be
-used with multiple producers that independently close the channel.
+channel *ch_open(channel *c)
 
-#### ch_close
+channel *ch_close(channel *c)
 ```
-void ch_close(channel *c)
-```
-Closes the channel if the caller has the last reference to the channel.
-Decreases the reference count otherwise. Attempting to send on a closed channel
-immediately returns an error code. Receiving on a closed channel succeeds until
-the channel is emptied.
+`ch_open` increments the open count of the channel and returns the channel.
+Additional opens can be useful in scenarios with multiple producers
+independently closing the channel.
+
+`ch_close` closes the channel if the caller has the last open handle to the
+channel. Decrements the open count otherwise. Returns the channel.
 
 #### ch_send / ch_recv
 ```
@@ -101,7 +98,7 @@ channel_rc ch_timedrecv(channel *c, T elt, uint64_t timeout)
 Timed sends and receives fail on buffered channels if the channel is full or
 empty, respectively, for the duration of the timeout, and fail on unbuffered
 channels if there is no waiting receiver or sender, respectively, for the
-duration of the timeout. `timeout` is specified in milliseconds. Both return
+duration of the timeout. The timeout is specified in microseconds. Both return
 `CH_OK` on success, `CH_WBLOCK` on failure, or `CH_CLOSED` if the channel is
 closed.
 
@@ -111,8 +108,8 @@ Not very well tested.
 ```
 channel_rc ch_forcesend(channel *c_, T elt)
 ```
-Forced sends on buffered channels do not block and instead overwrite the oldest
-message if the buffer is full. Forced sends are not possible with unbuffered
+Forced sends to buffered channels do not block and instead overwrite the oldest
+message if the buffer is full. It is not possible to force sends to unbuffered
 channels. Returns `CH_OK` on success or `CH_CLOSED` if the channel is closed.
 
 Not very well tested.
@@ -144,15 +141,24 @@ channel in the channel set.
 
 #### ch_select
 ```
+uint32_t ch_select(channel_set *s)
+uint32_t ch_tryselect(channel_set *s)
 uint32_t ch_select(channel_set *s, uint64_t timeout)
 ```
-Randomly performs the registered operation on one channel in the channel set
-that is ready to perform that operation. Blocks if no channel is ready. A
-timeout in milliseconds may be optionally specified, or `0` for no timeout.
-Returns the id of the channel successfully completes its operation,
-`CH_SEL_CLOSED` if all channels are closed or have been registered with
-`CH_NOOP`, or `CH_SEL_WBLOCK` if no operation successfully completes before the
-timeout.
+`ch_select` blocks indefinitely until one of the registered operations in the
+channel set can be completed.
+
+`ch_tryselect` attempts to complete an operation or returns immediately with
+`CH_WBLOCK` if it fails to do so.
+
+`ch_timedselect` attempts to complete an operation before the timeout,
+specified in microseconds, expires or returns with `CH_WBLOCK` if it fails to
+do so.
+
+If multiple operations can be completed, just one is chosen at random. All
+three return the id of the channel that completed its operation upon success
+and return `CH_CLOSED` if all of the channels in the set are either closed or
+registered with `CH_NOOP`.
 
 Not very well tested.
 

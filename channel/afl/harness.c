@@ -32,7 +32,7 @@ sender(void *arg) {
     assert(ch_recv(cc, c1) == CH_OK);
     uint8_t i;
     while (ch_recv(c, i) == CH_OK) {
-        assert(ch_timedsend(c1, i, 1) != CH_CLOSED);
+        assert(ch_timedsend(c1, i, 100) != CH_CLOSED);
     }
     assert(atomic_load_explicit(&closed, memory_order_acquire));
     return NULL;
@@ -73,7 +73,7 @@ main(void) {
         }
         for (ssize_t i = 0; i < readlen; i++) {
             i8 = buf[i];
-            ch_select(sender_set, i8);
+            ch_timedselect(sender_set, ((uint64_t)i8) * 100);
         }
     }
     free(buf);

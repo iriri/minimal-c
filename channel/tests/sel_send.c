@@ -18,7 +18,7 @@ identity(void *arg) {
     while (ch_recv(chani, ir) != CH_CLOSED) {
         printf("%d, %d\n", id, ir);
         assert(ir == id);
-        sleep(1);
+        usleep(10000);
     }
     return NULL;
 }
@@ -41,7 +41,7 @@ main(void) {
         ch_set_add(set, chanpool[i], CH_SEND, ia[i]);
     }
     for (int i = 1; i <= 100; i++) {
-        ch_select(set, 0);
+        ch_select(set);
     }
     set = ch_set_drop(set);
     for (int i = 0; i < THREADC; i++) {

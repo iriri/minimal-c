@@ -38,7 +38,7 @@ main(void) {
     srand(time(NULL));
 
     int i;
-    channel *chan= ch_make(int, 2);
+    channel *chan = ch_make(int, 2);
     i = 1;
     assert(ch_send(chan, i) == CH_OK);
     i = 2;
@@ -55,19 +55,21 @@ main(void) {
     assert(i == 3);
     assert(ch_tryrecv(chan, i) == CH_WBLOCK); /* Same deal as ch_trysend */
     assert(i == 3);
-    /* Added to make the multiple producer case less painful. Dup increments a
-     * reference count and returns the same channel. ch_close decrements the
-     * count and only actually closes the channel if the count is now 0. */
-    channel *dup = ch_dup(chan);
-    ch_close(dup);
-    channel *dup1 = ch_dup(dup);
+    /* ch_open increments the open count and returns the same channel. ch_close
+     * decrements the count and only actually closes the channel if the count
+     * is now 0. */
+    channel *chan1 = ch_open(chan);
+    ch_close(chan1);
+    channel *chan2 = ch_open(ch_dup(chan1));
     ch_close(chan);
-    ch_close(dup1);
+    ch_close(chan2);
     /* This library aims to better support closing channels from the receiver
      * side so sends can fail gracefully with CH_CLOSED */
     i = 1;
     assert(ch_send(chan, i) == CH_CLOSED);
     ch_drop(chan);
+    assert(ch_send(chan2, i) == CH_CLOSED);
+    ch_drop(chan2);
 
     chan = ch_make(int, 1);
     pthread_t pool[THREADC];

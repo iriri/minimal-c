@@ -70,7 +70,6 @@ main(void) {
     vec_concat(v, v1);
     int via4[] = {1, 4, 1, 2, 3, 4, 5};
     verify(v, via4, 7);
-
     vec_drop(v);
     vec_drop(v1);
 
@@ -80,6 +79,7 @@ main(void) {
     for (unsigned i = 0; i < vec_len(v2); i++) {
         vec_arr(v2, fn)[i]();
     }
+    vec_drop(v2);
     printf("All tests passed\n");
     return 0;
 }
