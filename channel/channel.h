@@ -306,19 +306,17 @@ typedef enum channel_select_rc_ {
 #define CH_SEL_NIL_ CH_WBLOCK
 #define CH_SEL_MAGIC_ CH_CLOSED
 
-#define ch_load_rlx_(obj) atomic_load_explicit(obj, memory_order_relaxed)
 #define ch_load_acq_(obj) atomic_load_explicit(obj, memory_order_acquire)
-#define ch_load_seq_cst_(obj) atomic_load_explicit(obj, memory_order_seq_cst)
 #define ch_store_rlx_(obj, des) \
     atomic_store_explicit(obj, des, memory_order_relaxed)
 #define ch_store_rel_(obj, des) \
     atomic_store_explicit(obj, des, memory_order_release)
 #define ch_store_seq_cst_(obj, des) \
     atomic_store_explicit(obj, des, memory_order_seq_cst)
-#define ch_faa_acq_rel_(obj, arg) \
-    atomic_fetch_add_explicit(obj, arg, memory_order_acq_rel)
-#define ch_fas_acq_rel_(obj, arg) \
-    atomic_fetch_sub_explicit(obj, arg, memory_order_acq_rel)
+#define ch_faa_rel_(obj, arg) \
+    atomic_fetch_add_explicit(obj, arg, memory_order_release)
+#define ch_fas_rel_(obj, arg) \
+    atomic_fetch_sub_explicit(obj, arg, memory_order_release)
 #define ch_cas_weak_(obj, exp, des) \
     atomic_compare_exchange_weak_explicit( \
         obj, exp, des, memory_order_seq_cst, memory_order_relaxed)
@@ -361,7 +359,7 @@ channel_make(uint32_t msgsize, uint32_t cap) {
 /* Increments the reference count of the channel and returns the channel. */
 inline channel *
 channel_dup(channel *c) {
-    uint32_t prev = ch_faa_acq_rel_(&c->hdr.refc, 1);
+    uint32_t prev = ch_faa_rel_(&c->hdr.refc, 1);
     ch_assert_(0 < prev && prev < UINT32_MAX); // I mean, I guess...
     return c;
 }
@@ -370,7 +368,7 @@ channel_dup(channel *c) {
  * last reference. Decrements the reference count otherwise. Returns `NULL`. */
 inline channel *
 channel_drop(channel *c) {
-    uint32_t refc = ch_fas_acq_rel_(&c->hdr.refc, 1);
+    uint32_t refc = ch_fas_rel_(&c->hdr.refc, 1);
     if (refc == 1) {
         ch_assert_(ch_mutex_destroy_(&c->hdr.lock) == 0);
         free(c);
@@ -434,7 +432,7 @@ channel_waitq_remove_(channel_waiter_ *_Atomic *waitq, channel_waiter_ *w) {
  * closing the channel. */
 inline channel *
 channel_open(channel *c) {
-    uint32_t prev = ch_faa_acq_rel_(&c->hdr.openc, 1);
+    uint32_t prev = ch_faa_rel_(&c->hdr.openc, 1);
     ch_assert_(0 < prev && prev < UINT32_MAX);
     return c;
 }
@@ -443,7 +441,7 @@ channel_open(channel *c) {
  * Decrements the open count otherwise. Returns the channel. */
 inline channel *
 channel_close(channel *c) {
-    uint32_t openc = ch_fas_acq_rel_(&c->hdr.openc, 1);
+    uint32_t openc = ch_fas_rel_(&c->hdr.openc, 1);
     if (openc != 1) {
         ch_assert_(openc != 0);
         return c;
@@ -520,7 +518,7 @@ channel_buf_trysend_(channel_buf_ *c, void *msg) {
                 write.u64 + 1 : (uint64_t)(write.u32.lap + 2) << 32;
         if (ch_cas_weak_(&c->write.u64, &write.u64, write1)) {
             memcpy(ch_cell_msg_(cell), msg, c->msgsize);
-            ch_store_seq_cst_(ch_cell_lap_(cell), lap + 1);
+            ch_store_rel_(ch_cell_lap_(cell), lap + 1);
             channel_buf_waitq_shift_(&c->recvq, &c->lock);
             return CH_OK;
         }
@@ -548,7 +546,7 @@ channel_buf_tryrecv_(channel_buf_ *c, void *msg) {
                 read.u64 + 1 : (uint64_t)(read.u32.lap + 2) << 32;
         if (ch_cas_weak_(&c->read.u64, &read.u64, read1)) {
             memcpy(msg, ch_cell_msg_(cell), c->msgsize);
-            ch_store_seq_cst_(ch_cell_lap_(cell), lap + 1);
+            ch_store_rel_(ch_cell_lap_(cell), lap + 1);
             channel_buf_waitq_shift_(&c->sendq, &c->lock);
             return CH_OK;
         }
@@ -915,7 +913,7 @@ channel_forcesend(channel *c, void *msg, uint32_t msgsize) {
             uint64_t read1 = read.u32.index + 1 < c->buf.cap ?
                     read.u64 + 1 : (uint64_t)(read.u32.lap + 2) << 32;
             if (ch_cas_weak_(&c->buf.read.u64, &read.u64, read1)) {
-                ch_store_seq_cst_(ch_cell_lap_(cell1), lap1 + 1);
+                ch_store_rel_(ch_cell_lap_(cell1), lap1 + 1);
             }
             continue;
         }
@@ -924,7 +922,7 @@ channel_forcesend(channel *c, void *msg, uint32_t msgsize) {
                 write.u64 + 1 : (uint64_t)(write.u32.lap + 2) << 32;
         if (ch_cas_weak_(&c->buf.write.u64, &write.u64, write1)) {
             memcpy(ch_cell_msg_(cell), msg, c->buf.msgsize);
-            ch_store_seq_cst_(ch_cell_lap_(cell), lap + 1);
+            ch_store_rel_(ch_cell_lap_(cell), lap + 1);
             channel_buf_waitq_shift_(&c->buf.recvq, &c->buf.lock);
             return full ? CH_WBLOCK : CH_OK;
         }
