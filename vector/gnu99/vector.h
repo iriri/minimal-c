@@ -93,7 +93,9 @@ typedef struct vector_hdr_ {
 #define vec_push_(v, elt, id) \
     do { \
         __extension__ __auto_type vec_sym_(v, id) = v; \
-        vector_grow_(&vec_sym_(v, id)->hdr, sizeof(*v->vec.arr)); \
+        if (vec_sym_(v, id)->vec.len == vec_sym_(v, id)->vec.cap) { \
+            vector_grow_(&vec_sym_(v, id)->hdr, sizeof(*v->vec.arr)); \
+        } \
         vec_sym_(v, id)->vec.arr[vec_sym_(v, id)->vec.len++] = elt; \
     } while (0)
 
@@ -154,11 +156,14 @@ vector_assert_(const char *file, unsigned line, const char *pred) {
 
 inline void *
 vector_make(size_t eltsize, size_t len, size_t cap) {
-    vec_assert_(0 < cap && cap <= SIZE_MAX / eltsize && len <= cap);
+    vec_assert_(
+        eltsize <= SIZE_MAX / 8 && // Ugh lol; `see vector_grow_`
+        cap <= SIZE_MAX / eltsize &&
+        len <= cap);
     vector_hdr_ *v = malloc(sizeof(*v));
     vec_assert_(v);
     *v = (vector_hdr_){malloc(cap * eltsize), len, cap};
-    vec_assert_(v->arr);
+    vec_assert_(v->arr || cap == 0);
     return v;
 }
 
@@ -174,7 +179,9 @@ vector_shrink(vector_hdr_ *v, size_t eltsize) {
     if (v->len * 4 > v->cap) {
         return;
     }
-    vec_assert_((v->arr = realloc(v->arr, (v->cap = 2 * v->len) * eltsize)));
+    vec_assert_(
+        (v->arr = realloc(v->arr, (v->cap = 2 * v->len) * eltsize)) ||
+        v->len == 0);
 }
 
 inline void
@@ -182,16 +189,19 @@ vector_trim(vector_hdr_ *v, size_t eltsize) {
     if (v->len == v->cap) {
         return;
     }
-    vec_assert_((v->arr = realloc(v->arr, (v->cap = v->len) * eltsize)));
+    vec_assert_(
+        (v->arr = realloc(v->arr, (v->cap = v->len) * eltsize)) ||
+        v->len == 0);
 }
 
 inline void
 vector_grow_(vector_hdr_ *v, size_t eltsize) {
-    if (v->len < v->cap) {
-        return;
+    if (v->cap == 0) {
+        v->cap = 8;
+    } else {
+        vec_assert_(v->cap < SIZE_MAX - v->cap &&
+                (v->cap *= 2) <= SIZE_MAX / eltsize);
     }
-    vec_assert_(v->cap < SIZE_MAX - v->cap &&
-            (v->cap *= 2) <= SIZE_MAX / eltsize);
     vec_assert_((v->arr = realloc(v->arr, v->cap * eltsize)));
 }
 

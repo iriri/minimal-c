@@ -153,7 +153,7 @@ minmax_push_(minmax *m, size_t eltsize) {
     mm_assert_(eltsize == m->eltsize);
     if (m->len == m->cap) {
         mm_assert_(m->cap < SIZE_MAX - m->cap &&
-                (m->cap *= 2) < SIZE_MAX / eltsize);
+            (m->cap *= 2) < SIZE_MAX / eltsize);
         mm_assert_((m->heap = realloc(m->heap, m->cap * eltsize)));
     }
     return mm_elt_(m->len);
@@ -185,7 +185,7 @@ minmax_bubble_up_min_(minmax *m, size_t index, size_t eltsize) {
     size_t pindex;
     char *elt, *parent;
     while ((pindex = minmax_parent_(minmax_parent_(index))) != SIZE_MAX &&
-            m->cmpfn((elt = mm_elt_(index)), (parent = mm_elt_(pindex))) < 0) {
+        m->cmpfn((elt = mm_elt_(index)), (parent = mm_elt_(pindex))) < 0) {
         minmax_swap_elts_(elt, parent, eltsize);
         index = pindex;
     }
@@ -196,7 +196,7 @@ minmax_bubble_up_max_(minmax *m, size_t index, size_t eltsize) {
     size_t pindex;
     char *elt, *parent;
     while ((pindex = minmax_parent_(minmax_parent_(index))) != SIZE_MAX &&
-            m->cmpfn((elt = mm_elt_(index)), (parent = mm_elt_(pindex))) > 0) {
+        m->cmpfn((elt = mm_elt_(index)), (parent = mm_elt_(pindex))) > 0) {
         minmax_swap_elts_(elt, parent, eltsize);
         index = pindex;
     }

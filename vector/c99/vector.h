@@ -79,11 +79,14 @@ vector_assert_(const char *file, unsigned line, const char *pred) {
 
 inline vector *
 vector_make(size_t eltsize, size_t len, size_t cap) {
-    vec_assert_(0 < cap && cap <= SIZE_MAX / eltsize && len <= cap);
+    vec_assert_(
+        eltsize <= SIZE_MAX / 8 && // Ugh lol; see `vector_push`
+        cap <= SIZE_MAX / eltsize &&
+        len <= cap);
     vector *v = malloc(sizeof(*v));
     vec_assert_(v);
     *v = (vector){malloc(cap * eltsize), eltsize, len, cap};
-    vec_assert_(v->arr);
+    vec_assert_(v->arr || cap == 0);
     return v;
 }
 
@@ -99,8 +102,9 @@ vector_shrink(vector *v) {
     if (v->len * 4 > v->cap) {
         return;
     }
-    vec_assert_((v->arr = realloc(
-        v->arr, (v->cap = 2 * v->len) * v->eltsize)));
+    vec_assert_(
+        (v->arr = realloc(v->arr, (v->cap = 2 * v->len) * v->eltsize)) ||
+        v->len == 0);
 }
 
 inline void
@@ -108,7 +112,9 @@ vector_trim(vector *v) {
     if (v->len == v->cap) {
         return;
     }
-    vec_assert_((v->arr = realloc(v->arr, (v->cap = v->len) * v->eltsize)));
+    vec_assert_(
+        (v->arr = realloc(v->arr, (v->cap = v->len) * v->eltsize)) ||
+        v->len == 0);
 }
 
 inline void *
@@ -121,8 +127,12 @@ inline void *
 vector_push(vector *v, size_t eltsize) {
     vec_assert_(eltsize == v->eltsize);
     if (v->len == v->cap) {
-        vec_assert_(v->cap <= SIZE_MAX - v->cap &&
+        if (v->cap == 0) {
+            v->cap = 8;
+        } else {
+            vec_assert_(v->cap <= SIZE_MAX - v->cap &&
                 (v->cap *= 2) <= SIZE_MAX / eltsize);
+        }
         vec_assert_((v->arr = realloc(v->arr, v->cap * eltsize)));
     }
     return v->arr + (v->len++ * eltsize);
@@ -144,7 +154,7 @@ vector_concat(vector *v, vector *v1) {
     if (v->len + v1->len > v->cap) {
         size_t g = v->cap > v1->cap ? v->cap : v1->cap;
         vec_assert_(v->cap <= SIZE_MAX - g &&
-                (v->cap += g) <= SIZE_MAX / v->eltsize);
+            (v->cap += g) <= SIZE_MAX / v->eltsize);
         vec_assert_((v->arr = realloc(v->arr, v->cap * v->eltsize)));
     }
     memmove(v->arr + (v->len * v->eltsize), v1->arr, v1->len * v1->eltsize);

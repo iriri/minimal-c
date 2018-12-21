@@ -80,6 +80,13 @@ main(void) {
         vec_arr(v2, fn)[i]();
     }
     vec_drop(v2);
+
+    vector *v3 = vec_make(int, 0, 2);
+    vec_trim(v3);
+    vec_push(v3, int, 1);
+    vec_push(v3, int, 2);
+    verify(v3, (int[]){1, 2}, 2);
+    vec_drop(v3);
     printf("All tests passed\n");
     return 0;
 }

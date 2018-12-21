@@ -962,8 +962,8 @@ channel_set_add(
             s->arr = realloc(s->arr, (s->cap *= 2) * sizeof(s->arr[0]))));
     }
     ch_assert_(msgsize == c->hdr.msgsize &&
-            s->len < CH_SEL_NIL_ &&
-            s->len < RAND_MAX);
+        s->len < CH_SEL_NIL_ &&
+        s->len < RAND_MAX);
     s->arr[s->len] = (channel_case_){c, msg, NULL, op};
     return s->len++;
 }
@@ -1058,8 +1058,8 @@ channel_select_remove_waiters_(channel_set *s, uint32_t state) {
     for (uint32_t i = 0; i < s->len; i++) {
         channel_case_ *cc = s->arr + i;
         if (cc->op == CH_NOOP ||
-                ch_load_acq_(&cc->c->hdr.openc) == 0 ||
-                !cc->waiter) {
+            ch_load_acq_(&cc->c->hdr.openc) == 0 ||
+            !cc->waiter) {
             continue;
         }
         channel_waiter_ *_Atomic *waitq = cc->op == CH_SEND ?
@@ -1130,10 +1130,10 @@ channel_select(channel_set *s, uint64_t timeout) {
         if (state < CH_SEL_NIL_) {
             channel_case_ cc = s->arr[state];
             if (cc.c->hdr.cap == 0 ||
-                    (cc.op == CH_SEND && channel_buf_trysend_(
-                        &cc.c->buf, cc.msg) == CH_OK) ||
-                    (cc.op == CH_RECV && channel_buf_tryrecv_(
-                        &cc.c->buf, cc.msg) == CH_OK)) {
+                (cc.op == CH_SEND && channel_buf_trysend_(
+                    &cc.c->buf, cc.msg) == CH_OK) ||
+                (cc.op == CH_RECV && channel_buf_tryrecv_(
+                    &cc.c->buf, cc.msg) == CH_OK)) {
                 return state;
             }
         }
