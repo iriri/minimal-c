@@ -18,7 +18,10 @@ integers and `vector(ptr(int)) v;` declares one such vector.
 
 ### Types
 ```
-typedef union vector(T) vector(T);
+typedef union vector(T) {
+    T *arr;
+    ...
+} vector(T);
 typedef T *ptr(T)
 ```
 
@@ -104,5 +107,5 @@ void vec_remove(vector(T) *v, size_t index)
 Removes the element at `index` from the vector.
 
 ### Notes
-This library defines the macro `ptr` and reserves the "namespaces" `vec_`,
-`vector_`, `VEC_`, and `VECTOR_`.
+This library defines the macros `ptr` and `PTR_DEF`, and reserves the
+"namespaces" `vec_`, `vector_`, `VEC_`, and `VECTOR_`.

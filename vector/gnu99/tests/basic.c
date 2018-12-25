@@ -37,10 +37,10 @@ main(void) {
     assert(vec_pop(v, a) && a == 2);
     vec_push(v, 2);
     vec_push(v, 3);
-    assert(v->vec.cap == 4);
+    assert(v->hdr.cap == 4);
     vec_push(v, 4);
     vec_push(v, 5);
-    assert(v->vec.cap == 8);
+    assert(v->hdr.cap == 8);
     int via[] = {1, 2, 3, 4, 5};
     verify(v, via, 5);
     assert(vec_peek(v, a));
@@ -54,9 +54,9 @@ main(void) {
     verify(v, via2, 3);
     vec_remove(v, vec_find(v, 1));
     vec_shrink(v);
-    assert(v->vec.cap == 4);
+    assert(v->hdr.cap == 4);
     vec_trim(v);
-    assert(v->vec.cap == 2);
+    assert(v->hdr.cap == 2);
     int via3[] = {2, 4};
     verify(v, via3, 2);
     vec_index(v, 0) = 1;

@@ -11,7 +11,6 @@
 
 /* ------------------------------- Interface ------------------------------- */
 #define VECTOR_H_VERSION 0l // 0.0.0
-#define VECTOR_H_STD
 
 typedef struct vector vector;
 
@@ -21,28 +20,26 @@ typedef struct vector vector;
 #define vec_shrink(v) vector_shrink(v)
 #define vec_trim(v) vector_trim(v)
 
-#define vec_len(v) (v->len)
-#define vec_arr(v, T) ((T *)v->arr)
+#define vec_len(v) ((v)->len)
+#define vec_arr(v, T) ((T *)(v)->arr)
 #define vec_index(v, T, index) (*(T *)vector_index(v, sizeof(T), index))
 
-#define vec_push(v, T, elt) ((void)(*(T *)vector_push(v, sizeof(T)) = elt))
+#define vec_push(v, T, elt) ((void)(*(T *)vector_push(v, sizeof(T)) = (elt)))
 
 /* TODO Is there a way to do this "type check" at compile-time? `static_assert`
  * is a statement, not an expression, so it can't be used with the comma
  * operator. Is this weak of a "type check" even worth doing? */
-#define vec_peek(v, T, elt) \
-    ( \
-        vec_assert_(sizeof(T) == sizeof(elt)), \
-        vector_peek(v, sizeof(T), &elt, false) \
-    )
-#define vec_pop(v, T, elt) \
-    ( \
-        vec_assert_(sizeof(T) == sizeof(elt)), \
-        vector_peek(v, sizeof(T), &elt, true) \
-    )
+#define vec_peek(v, T, elt) ( \
+    vec_assert_(sizeof(T) == sizeof(elt)), \
+    vector_peek(v, sizeof(T), &(elt), false) \
+)
+#define vec_pop(v, T, elt) ( \
+    vec_assert_(sizeof(T) == sizeof(elt)), \
+    vector_peek(v, sizeof(T), &(elt), true) \
+)
 
 #define vec_concat(v, v1) vector_concat(v, v1)
-#define vec_find(v, elt) vector_find(v, sizeof(elt), &elt)
+#define vec_find(v, elt) vector_find(v, sizeof(elt), &(elt))
 #define vec_remove(v, index) vector_remove(v, index)
 
 /* These declarations must be present in exactly one compilation unit. */

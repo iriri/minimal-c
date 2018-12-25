@@ -27,7 +27,7 @@ typedef int (*minmax_cmpfn)(void *restrict, void *restrict);
     minmax_fromarr(sizeof(T), len, cap, cmpfn, arr)
 #define mm_shrink(m) minmax_shrink(m)
 
-#define mm_len(m) (m->len)
+#define mm_len(m) ((m)->len)
 
 /* `__COUNTER__`, unfortunately, is an extension. `__LINE__` is mostly good
  * enough except when nesting similar macros in one another. */
@@ -36,26 +36,22 @@ typedef int (*minmax_cmpfn)(void *restrict, void *restrict);
 /* TODO Is there a way to do this "type check" at compile-time? `static_assert`
  * is a statement, not an expression, so it can't be used with the comma
  * operator. Is this weak of a "type check" even worth doing? */
-#define mm_peekmin(m, T, elt) \
-    ( \
-        mm_assert_(sizeof(T) == sizeof(elt)), \
-        minmax_peekmin(m, sizeof(T), &elt, false) \
-    )
-#define mm_pollmin(m, T, elt) \
-    ( \
-        mm_assert_(sizeof(T) == sizeof(elt)), \
-        minmax_peekmin(m, sizeof(T), &elt, true) \
-    )
-#define mm_peekmax(m, T, elt) \
-    ( \
-        mm_assert_(sizeof(T) == sizeof(elt)), \
-        minmax_peekmax(m, sizeof(T), &elt, false) \
-    )
-#define mm_pollmax(m, T, elt) \
-    ( \
-        mm_assert_(sizeof(T) == sizeof(elt)), \
-        minmax_peekmax(m, sizeof(T), &elt, true) \
-    )
+#define mm_peekmin(m, T, elt) ( \
+    mm_assert_(sizeof(T) == sizeof(elt)), \
+    minmax_peekmin(m, sizeof(T), &(elt), false) \
+)
+#define mm_pollmin(m, T, elt) ( \
+    mm_assert_(sizeof(T) == sizeof(elt)), \
+    minmax_peekmin(m, sizeof(T), &(elt), true) \
+)
+#define mm_peekmax(m, T, elt) ( \
+    mm_assert_(sizeof(T) == sizeof(elt)), \
+    minmax_peekmax(m, sizeof(T), &(elt), false) \
+)
+#define mm_pollmax(m, T, elt) ( \
+    mm_assert_(sizeof(T) == sizeof(elt)), \
+    minmax_peekmax(m, sizeof(T), &(elt), true) \
+)
 
 /* These declarations must be present in exactly one compilation unit. */
 #define MINMAX_EXTERN_DECL \

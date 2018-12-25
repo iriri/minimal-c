@@ -17,32 +17,32 @@
  * be wrapped with `ptr` instead of using `*` as type names are created via
  * token pasting. E.g. `VECTOR_DEF_PTR(int);` defines the type of vectors of
  * pointers to integers and `vector(ptr(int)) v;` declares one such vector. */
-#define vector(T) vector_##T##_
+#define vector(T) vector_paste_(T)
+#define vector_paste_(T) vector_##T##_
 #ifndef MINIMAL_
 #define MINIMAL_
-#define ptr(T) T##ptr_
+#define ptr(T) ptr_paste_(T)
+#define ptr_paste_(T) ptr_##T##_
+#define PTR_DEF(T) typedef T *ptr(T)
 #endif
 
 #define VECTOR_DEF(T) \
     typedef union vector(T) { \
         vector_hdr_ hdr; \
-        struct { \
-            T *arr; \
-            size_t len, cap; \
-        } vec; \
+        T *arr; \
     } vector(T)
 #define VECTOR_DEF_PTR(T) \
-    typedef T *ptr(T); \
+    PTR_DEF(T); \
     VECTOR_DEF(ptr(T))
 
 /* Exported "functions" */
 #define vec_make(T, len, cap) ((vector(T) *)vector_make(sizeof(T), len, cap))
-#define vec_drop(v) vector_drop(&v->hdr)
-#define vec_shrink(v) vector_shrink(&v->hdr, sizeof(*v->vec.arr))
-#define vec_trim(v) vector_trim(&v->hdr, sizeof(*v->vec.arr))
+#define vec_drop(v) vector_drop(&(v)->hdr)
+#define vec_shrink(v) vector_shrink(&(v)->hdr, sizeof(*(v)->arr))
+#define vec_trim(v) vector_trim(&(v)->hdr, sizeof(*(v)->arr))
 
-#define vec_len(v) (v->vec.len)
-#define vec_arr(v) (v->vec.arr)
+#define vec_len(v) ((v)->hdr.len)
+#define vec_arr(v) ((v)->arr)
 #define vec_index(v, index) (*vec_index_(v, index, __COUNTER__))
 
 #define vec_push(v, elt) vec_push_(v, elt, __COUNTER__)
@@ -53,10 +53,10 @@
 #define vec_concat(v, v1) \
     do { \
         (void)sizeof((v = v1)); \
-        vector_concat(&v->hdr, &v1->hdr, sizeof(*v->vec.arr)); \
+        vector_concat(&(v)->hdr, &(v1)->hdr, sizeof(*(v)->arr)); \
     } while (0)
 #define vec_find(v, elt) vec_find_(v, elt, __COUNTER__)
-#define vec_remove(v, index) vector_remove(&v->hdr, index, sizeof(*v->vec.arr))
+#define vec_remove(v, index) vector_remove(&(v)->hdr, index, sizeof(*(v)->arr))
 
 /* These declarations must be present in exactly one compilation unit. */
 #define VECTOR_EXTERN_DECL \
@@ -76,72 +76,64 @@ typedef struct vector_hdr_ {
     size_t len, cap;
 } vector_hdr_;
 
-/* Almost hygenic... */
 #define vec_sym_(sym, id) VEC_##sym##id##_
 
-/* GCC and Clang both seem to do a good job of of eliminating any unnecessary
- * variables at O1 and above. */
-#define vec_index_(v, index, id) \
-    __extension__ ({ \
-        __auto_type vec_sym_(v, id) = &v->vec; \
-        __auto_type vec_sym_(index, id) = index; \
-        vec_assert_( \
-            vec_sym_(index, id) < (typeof(index))vec_sym_(v, id)->len); \
-        vec_sym_(v, id)->arr + vec_sym_(index, id); \
-    })
+#define vec_index_(v, index, id) __extension__ ({ \
+    __auto_type vec_sym_(v_, id) = v; \
+    __auto_type vec_sym_(index, id) = index; \
+    vec_assert_( \
+        vec_sym_(index, id) < (typeof(index))vec_sym_(v_, id)->hdr.len); \
+    vec_sym_(v_, id)->arr + vec_sym_(index, id); \
+})
 
-#define vec_push_(v, elt, id) \
-    do { \
-        __extension__ __auto_type vec_sym_(v, id) = v; \
-        if (vec_sym_(v, id)->vec.len == vec_sym_(v, id)->vec.cap) { \
-            vector_grow_(&vec_sym_(v, id)->hdr, sizeof(*v->vec.arr)); \
-        } \
-        vec_sym_(v, id)->vec.arr[vec_sym_(v, id)->vec.len++] = elt; \
-    } while (0)
+#define vec_push_(v, elt, id) do { \
+    __extension__ __auto_type vec_sym_(v_, id) = v; \
+    if (vec_sym_(v_, id)->hdr.len == vec_sym_(v_, id)->hdr.cap) { \
+        vector_grow_(&vec_sym_(v_, id)->hdr, sizeof(*(v)->arr)); \
+    } \
+    vec_sym_(v_, id)->arr[vec_sym_(v_, id)->hdr.len++] = elt; \
+} while (0)
 
-#define vec_peek_(v, elt, id) \
-    __extension__ ({ \
-        __label__ ret; \
-        bool vec_sym_(rc, id) = true; \
-        __auto_type vec_sym_(v, id) = &v->vec; \
-        if (vec_sym_(v, id)->len == 0) { \
-            vec_sym_(rc, id) = false; \
+#define vec_peek_(v, elt, id) __extension__ ({ \
+    __label__ ret; \
+    bool rc = true; \
+    __auto_type vec_sym_(v_, id) = v; \
+    if (vec_sym_(v_, id)->hdr.len == 0) { \
+        rc = false; \
+        goto ret; \
+    } \
+    elt = vec_sym_(v_, id)->arr[vec_sym_(v_, id)->hdr.len - 1]; \
+ret: \
+    rc; \
+})
+
+#define vec_pop_(v, elt, id) __extension__ ({ \
+    __label__ ret; \
+    __auto_type vec_sym_(v_, id) = v; \
+    bool rc = true; \
+    if (vec_sym_(v_, id)->hdr.len == 0) { \
+        rc = false; \
+        goto ret; \
+    } \
+    elt = vec_sym_(v_, id)->arr[--vec_sym_(v_, id)->hdr.len]; \
+ret: \
+    rc; \
+})
+
+#define vec_find_(v, elt, id) __extension__ ({ \
+    __label__ ret; \
+    __auto_type vec_sym_(v_, id) = v; \
+    __auto_type vec_sym_(elt, id) = elt; \
+    size_t vec_sym_(index, id) = SIZE_MAX; \
+    for (size_t i = 0; i < vec_sym_(v_, id)->hdr.len; i++) { \
+        if (vec_sym_(v_, id)->arr[i] == vec_sym_(elt, id)) { \
+            vec_sym_(index, id) = i; \
             goto ret; \
         } \
-        elt = vec_sym_(v, id)->arr[vec_sym_(v, id)->len - 1]; \
+    } \
 ret: \
-        vec_sym_(rc, id); \
-    })
-
-#define vec_pop_(v, elt, id) \
-    __extension__ ({ \
-        __label__ ret; \
-        __auto_type vec_sym_(v, id) = &v->vec; \
-        bool vec_sym_(rc, id) = true; \
-        if (vec_sym_(v, id)->len == 0) { \
-            vec_sym_(rc, id) = false; \
-            goto ret; \
-        } \
-        elt = vec_sym_(v, id)->arr[--vec_sym_(v, id)->len]; \
-ret: \
-        vec_sym_(rc, id); \
-    })
-
-#define vec_find_(v, elt, id) \
-    __extension__ ({ \
-        __label__ ret; \
-        __auto_type vec_sym_(v, id) = &v->vec; \
-        __auto_type vec_sym_(elt, id) = elt; \
-        size_t vec_sym_(index, id) = SIZE_MAX; \
-        for (size_t i = 0; i < vec_sym_(v, id)->len; i++) { \
-            if (vec_sym_(v, id)->arr[i] == vec_sym_(elt, id)) { \
-                vec_sym_(index, id) = i; \
-                goto ret; \
-            } \
-        } \
-ret: \
-        vec_sym_(index, id); \
-    })
+    vec_sym_(index, id); \
+})
 
 /* `vec_assert_` never becomes a noop, even when `NDEBUG` is set. */
 #define vec_assert_(pred) \
