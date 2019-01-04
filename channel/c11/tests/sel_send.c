@@ -33,7 +33,7 @@ main(void) {
     int ia[THREADC];
     channel_set *set = ch_set_make(1);
     for (int i = 0; i < THREADC; i++) {
-        chanpool[i] = ch_make(int, rand() % 2);
+        chanpool[i] = ch_make(int, 0);
         assert(pthread_create(pool + i, NULL, identity, chanp) == 0);
         assert(ch_send(chanp, chanpool[i]) == CH_OK);
         assert(ch_send(chanpool[i], i) == CH_OK);

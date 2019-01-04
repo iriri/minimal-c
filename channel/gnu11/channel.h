@@ -285,7 +285,8 @@ typedef struct channel_hdr_ {
     ch_mutex_ lock;
 } channel_hdr_;
 
-/* If C had generics, the cell struct would be defined as follows:
+/* If C had generics, the cell struct would be defined as follows, except it
+ * isn't ever padded (TODO? might be a problem on some archs):
  * typedef struct channel_cell_<T> {
  *     _Atomic uint32_t lap;
  *     T msg;
@@ -351,6 +352,7 @@ typedef enum channel_select_rc_ {
 #define CH_SEL_NIL_ CH_WBLOCK
 #define CH_SEL_MAGIC_ CH_CLOSED
 
+#define ch_load_rlx_(obj) atomic_load_explicit(obj, memory_order_relaxed)
 #define ch_load_acq_(obj) atomic_load_explicit(obj, memory_order_acquire)
 #define ch_store_rlx_(obj, des) \
     atomic_store_explicit(obj, des, memory_order_relaxed)
@@ -358,10 +360,10 @@ typedef enum channel_select_rc_ {
     atomic_store_explicit(obj, des, memory_order_release)
 #define ch_store_seq_cst_(obj, des) \
     atomic_store_explicit(obj, des, memory_order_seq_cst)
-#define ch_faa_rel_(obj, arg) \
-    atomic_fetch_add_explicit(obj, arg, memory_order_release)
-#define ch_fas_rel_(obj, arg) \
-    atomic_fetch_sub_explicit(obj, arg, memory_order_release)
+#define ch_faa_acq_rel_(obj, arg) \
+    atomic_fetch_add_explicit(obj, arg, memory_order_acq_rel)
+#define ch_fas_acq_rel_(obj, arg) \
+    atomic_fetch_sub_explicit(obj, arg, memory_order_acq_rel)
 #define ch_cas_weak_(obj, exp, des) \
     atomic_compare_exchange_weak_explicit( \
         obj, exp, des, memory_order_seq_cst, memory_order_relaxed)
@@ -374,7 +376,7 @@ typedef enum channel_select_rc_ {
 /* Increments the reference count of the channel and returns the channel. */
 #define ch_dup_(c, id) __extension__ ({ \
     __auto_type ch_sym_(c_, id) = c; \
-    uint32_t prev = ch_faa_rel_(&ch_sym_(c_, id)->hdr.hdr.refc, 1); \
+    uint32_t prev = ch_faa_acq_rel_(&ch_sym_(c_, id)->hdr.hdr.refc, 1); \
     ch_assert_(0 < prev && prev < UINT32_MAX); \
     ch_sym_(c_, id); \
 })
@@ -384,7 +386,7 @@ typedef enum channel_select_rc_ {
  * closing the channel. */
 #define ch_open_(c, id) __extension__ ({ \
     __auto_type ch_sym_(c_, id) = c; \
-    uint32_t prev = ch_faa_rel_(&ch_sym_(c_, id)->hdr.hdr.openc, 1); \
+    uint32_t prev = ch_faa_acq_rel_(&ch_sym_(c_, id)->hdr.hdr.openc, 1); \
     ch_assert_(0 < prev && prev < UINT32_MAX); \
     ch_sym_(c_, id); \
 })
@@ -431,7 +433,7 @@ channel_make(uint32_t msgsize, uint32_t cap) {
  * last reference. Decrements the reference count otherwise. Returns `NULL`. */
 inline void *
 channel_drop(channel_ *c) {
-    uint32_t refc = ch_fas_rel_(&c->hdr.refc, 1);
+    uint32_t refc = ch_fas_acq_rel_(&c->hdr.refc, 1);
     if (refc == 1) {
         ch_assert_(ch_mutex_destroy_(&c->hdr.lock) == 0);
         free(c);
@@ -443,7 +445,7 @@ channel_drop(channel_ *c) {
 
 inline void
 channel_waitq_push_(channel_waiter_ *_Atomic *waitq, channel_waiter_ *waiter) {
-    channel_waiter_ *wq = ch_load_acq_(waitq);
+    channel_waiter_ *wq = ch_load_rlx_(waitq);
     if (!wq) {
         waiter->hdr.prev = waiter;
         ch_store_seq_cst_(waitq, waiter);
@@ -457,7 +459,7 @@ channel_waitq_push_(channel_waiter_ *_Atomic *waitq, channel_waiter_ *waiter) {
 
 inline channel_waiter_ *
 channel_waitq_shift_(channel_waiter_ *_Atomic *waitq) {
-    channel_waiter_ *w = ch_load_acq_(waitq);
+    channel_waiter_ *w = ch_load_rlx_(waitq);
     if (w) {
         if (w->hdr.next) {
             w->hdr.next->hdr.prev = w->hdr.prev;
@@ -481,11 +483,13 @@ channel_waitq_remove_(channel_waiter_ *_Atomic *waitq, channel_waiter_ *w) {
 
     if (w->hdr.prev->hdr.next) {
         w->hdr.prev->hdr.next = w->hdr.next;
+    } else {
+        ch_store_seq_cst_(waitq, w->hdr.next);
     }
     if (w->hdr.next) {
         w->hdr.next->hdr.prev = w->hdr.prev;
     } else {
-        ch_load_acq_(waitq)->hdr.prev = w->hdr.prev;
+        ch_load_rlx_(waitq)->hdr.prev = w->hdr.prev;
     }
     return true;
 }
@@ -494,7 +498,7 @@ channel_waitq_remove_(channel_waiter_ *_Atomic *waitq, channel_waiter_ *w) {
  * Decrements the open count otherwise. Returns the channel. */
 inline void
 channel_close(channel_ *c) {
-    uint32_t openc = ch_fas_rel_(&c->hdr.openc, 1);
+    uint32_t openc = ch_fas_acq_rel_(&c->hdr.openc, 1);
     if (openc != 1) {
         ch_assert_(openc != 0);
         return;

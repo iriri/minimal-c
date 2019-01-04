@@ -12,11 +12,11 @@ void *
 adder(void *arg) {
     channel *chan = (channel *)arg;
     int i;
-    unsigned long long sum = 0;
+    long long sum = 0;
     while (ch_recv(chan, i) != CH_CLOSED) {
         sum += i;
     }
-    unsigned long long *ret = malloc(sizeof(*ret));
+    long long *ret = malloc(sizeof(*ret));
     *ret = sum;
     printf("%llu\n", sum);
     return ret;
@@ -80,15 +80,15 @@ main(void) {
         ch_send(chan, i);
     }
     ch_close(chan);
-    unsigned long long sum = 0;
-    unsigned long long *r;
+    long long sum = 0;
+    long long *r;
     for (int i = 0; i < THREADC; i++) {
         assert(pthread_join(pool[i], (void **)&r) == 0);
         sum += *r;
         free(r);
     }
     printf("%llu\n", sum);
-    assert(sum == ((100000ull * 100001ull)/2));
+    assert(sum == ((100000ll * 100001ll)/2));
     ch_drop(chan);
 
     chan = ch_make(int, 0);
@@ -106,7 +106,7 @@ main(void) {
         free(r);
     }
     printf("%llu\n", sum);
-    assert(sum == ((100000ull * 100001ull)/2));
+    assert(sum == ((100000ll * 100001ll)/2));
     ch_drop(chan);
 
     channel *chanpool[THREADC];

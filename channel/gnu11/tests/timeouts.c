@@ -7,9 +7,7 @@
 CHANNEL_EXTERN_DECL;
 
 CHANNEL_DEF(int);
-CHANNEL_DEF(unsigned);
 CHANNEL_DEF_PTR(channel(int));
-CHANNEL_DEF_PTR(channel(unsigned));
 
 #define THREADC 16
 
@@ -17,12 +15,12 @@ void *
 adder(void *arg) {
     channel(int) *chan = (channel(int) *)arg;
     int i;
-    unsigned long long sum = 0;
+    long long sum = 0;
     while (ch_recv(chan, i) != CH_CLOSED) {
         sum += i;
         usleep(1000);
     }
-    unsigned long long *ret = malloc(sizeof(*ret));
+    long long *ret = malloc(sizeof(*ret));
     *ret = sum;
     printf("%llu\n", sum);
     return ret;
@@ -33,7 +31,7 @@ identity(void *arg) {
     channel(ptr(channel(int))) *chan = (channel(ptr(channel(int))) *)arg;
     channel(int) *chani;
     assert(ch_recv(chan, chani) == CH_OK);
-    unsigned id;
+    int id;
     assert(ch_recv(chani, id) == CH_OK);
     while (ch_send(chani, id) != CH_CLOSED) {
         usleep(1000);
@@ -59,8 +57,8 @@ main(void) {
         }
     }
     ch_close(chan);
-    unsigned long long sum = 0;
-    unsigned long long *r;
+    long long sum = 0;
+    long long *r;
     for (int i = 0; i < THREADC; i++) {
         assert(pthread_join(pool[i], (void **)&r) == 0);
         sum += *r;
@@ -93,14 +91,13 @@ main(void) {
     printf("%llu\n", sum);
     ch_drop(chan);
 
-    channel(unsigned) *chanpool[THREADC];
-    channel(ptr(channel(unsigned))) *chanp =
-        ch_make(ptr(channel(unsigned)), 0);
-    unsigned ir;
+    channel(int) *chanpool[THREADC];
+    channel(ptr(channel(int))) *chanp = ch_make(ptr(channel(int)), 0);
+    int ir;
     int stats[THREADC] = {0};
     channel_set *set = ch_set_make(THREADC);
     for (int i = 0; i < THREADC; i++) {
-        chanpool[i] = ch_make(unsigned, rand() % 2);
+        chanpool[i] = ch_make(int, 0);
         assert(pthread_create(pool + i, NULL, identity, chanp) == 0);
         assert(ch_send(chanp, chanpool[i]) == CH_OK);
         assert(ch_send(chanpool[i], i) == CH_OK);
@@ -111,7 +108,7 @@ main(void) {
         uint32_t id = ch_timedselect(set, 100);
         if (id != CH_WBLOCK) {
             ok++;
-            assert(ir == id);
+            assert((unsigned)ir == id);
             stats[ir]++;
         } else {
             timedout++;
