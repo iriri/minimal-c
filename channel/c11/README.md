@@ -40,9 +40,7 @@ enum channel_op {
 #### ch_make / ch_dup / ch_drop
 ```
 channel *ch_make(type T, uint32_t cap)
-
 channel *ch_dup(channel *c)
-
 channel *ch_drop(channel *c)
 ```
 `ch_make` allocates and initializes a new channel. If the capacity is 0 then
@@ -57,7 +55,6 @@ has the last reference. Decrements the reference count otherwise. Returns
 #### ch open / ch_close
 ```
 channel *ch_open(channel *c)
-
 channel *ch_close(channel *c)
 ```
 `ch_open` increments the open count of the channel and returns the channel.
@@ -69,9 +66,8 @@ channel. Decrements the open count otherwise. Returns the channel.
 
 #### ch_send / ch_recv
 ```
-channel_rc ch_send(channel *c, T elt)
-
-channel_rc ch_recv(channel *c, T elt)
+channel_rc ch_send(channel *c, T msg)
+channel_rc ch_recv(channel *c, T msg)
 ```
 Blocking sends and receives block on buffered channels if the buffer is full or
 empty, respectively, and block on unbuffered channels if there is no waiting
@@ -80,9 +76,8 @@ if the channel is closed.
 
 #### ch_trysend / ch_tryrecv
 ```
-channel_rc ch_trysend(channel *c, T elt)
-
-channel_rc ch_tryrecv(channel *c, T elt)
+channel_rc ch_trysend(channel *c, T msg)
+channel_rc ch_tryrecv(channel *c, T msg)
 ```
 Nonblocking sends and receives fail on buffered channels if the channel is full
 or empty, respectively, and fail on unbuffered channels if there is no waiting
@@ -91,9 +86,8 @@ on failure, or `CH_CLOSED` if the channel is closed.
 
 #### ch_timedsend / ch_timedrecv
 ```
-channel_rc ch_timedsend(channel *c, T elt, uint64_t timeout)
-
-channel_rc ch_timedrecv(channel *c, T elt, uint64_t timeout)
+channel_rc ch_timedsend(channel *c, T msg, uint64_t timeout)
+channel_rc ch_timedrecv(channel *c, T msg, uint64_t timeout)
 ```
 Timed sends and receives fail on buffered channels if the channel is full or
 empty, respectively, for the duration of the timeout, and fail on unbuffered
@@ -104,20 +98,9 @@ closed.
 
 Not very well tested.
 
-#### ch_forcesend
-```
-channel_rc ch_forcesend(channel *c_, T elt)
-```
-Forced sends to buffered channels do not block and instead overwrite the oldest
-message if the buffer is full. It is not possible to force sends to unbuffered
-channels. Returns `CH_OK` on success or `CH_CLOSED` if the channel is closed.
-
-Not very well tested.
-
 #### ch_set_make / ch_set_drop
 ```
 ch_set *ch_set_make(uint32_t cap)
-
 ch_set *ch_set_drop(ch_set *s)
 ```
 `ch_set_make` allocates and initializes a new channel set for use with
@@ -129,9 +112,8 @@ returns `NULL`.
 
 #### ch_set_add / ch_set_rereg
 ```
-uint32_t ch_set_add(ch_set *s, channel *c, ch_op op, T elt)
-
-void ch_set_rereg(ch_set *s, uint32_t id, ch_op op, T elt)
+uint32_t ch_set_add(ch_set *s, channel *c, ch_op op, T msg)
+void ch_set_rereg(ch_set *s, uint32_t id, ch_op op, T msg)
 ```
 `ch_set_add` adds a channel to the channel set and registers the specified
 operation and element.
@@ -165,11 +147,8 @@ Not very well tested.
 #### ch_poll / ch_case / ch_default / ch_poll_end
 ```
 ch_poll(int casec)
-
 ch_case(int id, int (*fn)(channel *, T), { block })
-
 ch_default({ block })
-
 ch_poll_end
 ```
 ch_poll is an alternative to `ch_select`. It continuously loops over the cases

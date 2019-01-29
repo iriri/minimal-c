@@ -33,6 +33,16 @@ identity(void *arg) {
     return NULL;
 }
 
+channel_rc
+forcesend(channel *c, int i) {
+    channel_rc rc;
+    while ((rc = ch_trysend(c, i)) == CH_WBLOCK) {
+        int j;
+        ch_tryrecv(c, j);
+    }
+    return rc;
+}
+
 int
 main(void) {
     srand(time(NULL));
@@ -46,9 +56,8 @@ main(void) {
     /* ch_trysend does not block but immediately returns with CH_WBLOCK */
     i = 3;
     assert(ch_trysend(chan, i) == CH_WBLOCK);
-    /* ch_forcesend is also nonblocking but just overwrites the oldest value
-     * instead. Does not work with unbuffered channels. */
-    assert(ch_forcesend(chan, i) == CH_WBLOCK);
+    /* ch_forcesend has been removed but the semantics are easy to replicate */
+    assert(forcesend(chan, i) == CH_OK);
     assert(ch_tryrecv(chan, i) == CH_OK);
     assert(i == 2);
     assert(ch_recv(chan, i) == CH_OK);

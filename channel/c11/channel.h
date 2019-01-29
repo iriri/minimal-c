@@ -68,7 +68,6 @@ typedef enum channel_op {
 #define ch_trysend(c, msg) channel_trysend(c, &(msg), sizeof(msg))
 #define ch_timedsend(c, msg, timeout) \
     channel_timedsend(c, &(msg), timeout, sizeof(msg))
-#define ch_forcesend(c, msg) channel_forcesend(c, &(msg), sizeof(msg))
 
 #define ch_recv(c, msg) channel_recv(c, &(msg), sizeof(msg))
 #define ch_tryrecv(c, msg) channel_tryrecv(c, &(msg), sizeof(msg))
@@ -129,7 +128,6 @@ typedef enum channel_op {
         channel *, void *, uint64_t, uint32_t); \
     extern inline channel_rc channel_timedrecv( \
         channel *, void *, uint64_t, uint32_t); \
-    extern inline channel_rc channel_forcesend(channel *, void *, uint32_t); \
     extern inline channel_set *channel_set_make(uint32_t); \
     extern inline channel_set *channel_set_drop(channel_set *); \
     extern inline uint32_t channel_set_add( \
@@ -868,51 +866,6 @@ channel_timedrecv(channel *c, void *msg, uint64_t timeout, uint32_t msgsize) {
     return c->hdr.cap > 0 ?
             channel_buf_recv_(&c->buf, msg, &ts) :
             channel_unbuf_rendez_(&c->unbuf, msg, &ts, CH_RECV);
-}
-
-/* Forced sends to buffered channels do not block and overwrite the oldest
- * message if the buffer is full. It is not possible to force sends to
- * unbuffered channels. Returns `CH_OK` on success or `CH_CLOSED` if the
- * channel is closed. */
-inline channel_rc
-channel_forcesend(channel *c, void *msg, uint32_t msgsize) {
-    ch_assert_(msgsize == c->hdr.msgsize && c->hdr.cap > 0);
-    for (bool full = false; ; ) {
-        if (ch_load_acq_(&c->buf.openc) == 0) {
-            return CH_CLOSED;
-        }
-
-        channel_un64_ write = {ch_load_acq_(&c->buf.write.u64)};
-        char *cell =
-            c->buf.buf + (write.u32.index * ch_cellsize_(c->buf.msgsize));
-        uint32_t lap = ch_load_acq_(ch_cell_lap_(cell));
-        if (write.u32.lap != lap) {
-            full = true;
-            channel_un64_ read = {ch_load_acq_(&c->buf.read.u64)};
-            char *cell1 =
-                c->buf.buf + (read.u32.index * ch_cellsize_(c->buf.msgsize));
-            uint32_t lap1 = ch_load_acq_(ch_cell_lap_(cell1));
-            if (read.u32.lap != lap1) {
-                continue;
-            }
-
-            uint64_t read1 = read.u32.index + 1 < c->buf.cap ?
-                    read.u64 + 1 : (uint64_t)(read.u32.lap + 2) << 32;
-            if (ch_cas_weak_(&c->buf.read.u64, &read.u64, read1)) {
-                ch_store_rel_(ch_cell_lap_(cell1), lap1 + 1);
-            }
-            continue;
-        }
-
-        uint64_t write1 = write.u32.index + 1 < c->buf.cap ?
-                write.u64 + 1 : (uint64_t)(write.u32.lap + 2) << 32;
-        if (ch_cas_weak_(&c->buf.write.u64, &write.u64, write1)) {
-            memcpy(ch_cell_msg_(cell), msg, c->buf.msgsize);
-            ch_store_rel_(ch_cell_lap_(cell), lap + 1);
-            channel_buf_waitq_shift_(&c->buf.recvq, &c->buf.lock);
-            return full ? CH_WBLOCK : CH_OK;
-        }
-    }
 }
 
 /* Allocates and initializes a new channel set. `cap` is not a hard limit but a

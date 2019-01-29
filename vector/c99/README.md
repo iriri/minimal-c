@@ -14,7 +14,6 @@ typedef struct vector vector;
 #### vec_make / vec_drop
 ```
 vector *vec_make(type T, size_t len, size_t cap)
-
 vector *vec_drop(vector *v)
 ```
 `vec_make` allocates and initializes a new vector with the specified initial
@@ -26,7 +25,6 @@ length and capacity.
 #### vec_shrink / vec_trim
 ```
 void vec_shrink(vector *v)
-
 void vec_trim(vector *v)
 ```
 `vec_shrink` shrinks the allocation of the vector to twice its length if it is
@@ -43,7 +41,6 @@ Returns the number of elements in the vector.
 #### vec_arr / vec_index
 ```
 T[] vec_arr(vector *v, type T)
-
 T vec_index(vector *v, type T, size_t index)
 ```
 `vec_arr` provides direct access to the backing array of the vector and should
@@ -62,7 +59,6 @@ already at full capacity.
 #### vec_peek / vec_pop
 ```
 bool vec_peek(vector *v, type T, T elt)
-
 bool vec_pop(vector *v, type T, T elt)
 ```
 `vec_peek` stores the last element of the vector in `elt` or returns `false` if

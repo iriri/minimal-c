@@ -29,7 +29,6 @@ typedef T *ptr(T)
 #### vec_make / vec_drop
 ```
 vector(T) *vec_make(type T, size_t len, size_t cap)
-
 vector(T) *vec_drop(vector(T) *v)
 ```
 `vec_make` allocates and initializes a new vector with the specified initial
@@ -41,7 +40,6 @@ length and capacity.
 #### vec_shrink / vec_trim
 ```
 void vec_shrink(vector(T) *v)
-
 void vec_trim(vector(T) *v)
 ```
 `vec_shrink` shrinks the allocation of the vector to twice its length if it is
@@ -58,7 +56,6 @@ Returns the number of elements in the vector.
 #### vec_arr / vec_index
 ```
 T[] vec_arr(vector(T) *v)
-
 T vec_index(vector(T) *v, size_t index)
 ```
 `vec_arr` provides direct access to the backing array of the vector and should
@@ -77,7 +74,6 @@ already at full capacity.
 #### vec_peek / vec_pop
 ```
 bool vec_peek(vector(T) *v, T elt)
-
 bool vec_pop(vector(T) *v, T elt)
 ```
 `vec_peek` stores the last element of the vector in `elt` or returns `false` if
