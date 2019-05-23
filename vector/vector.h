@@ -30,16 +30,16 @@ typedef struct vector vector;
  * is a statement, not an expression, so it can't be used with the comma
  * operator. Is this weak of a "type check" even worth doing? */
 #define vec_peek(v, T, elt) ( \
-    vec_assert_(sizeof(T) == sizeof(elt)), \
-    vector_peek(v, sizeof(T), &(elt), false) \
+    vec_assert_(sizeof(T) == sizeof(*elt)), \
+    vector_peek(v, sizeof(T), elt, false) \
 )
 #define vec_pop(v, T, elt) ( \
-    vec_assert_(sizeof(T) == sizeof(elt)), \
-    vector_peek(v, sizeof(T), &(elt), true) \
+    vec_assert_(sizeof(T) == sizeof(*elt)), \
+    vector_peek(v, sizeof(T), elt, true) \
 )
 
 #define vec_concat(v, v1) vector_concat(v, v1)
-#define vec_find(v, elt) vector_find(v, sizeof(elt), &(elt))
+#define vec_find(v, elt) vector_find(v, sizeof(*elt), elt)
 #define vec_remove(v, index) vector_remove(v, index)
 
 /* These declarations must be present in exactly one compilation unit. */

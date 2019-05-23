@@ -18,9 +18,9 @@ verify_int_heap(minmax *m) {
         return;
     }
     int min = INT_MIN, max = INT_MAX;
-    mm_peekmin(m, int, min);
-    mm_peekmax(m, int, max);
-    for (unsigned i = 0; i < mm_len(m); i++) {
+    mm_peekmin(m, int, &min);
+    mm_peekmax(m, int, &max);
+    for (size_t i = 0; i < mm_len(m); i++) {
         if (minmax_parent_(i) == SIZE_MAX) {
             continue;
         }
@@ -48,12 +48,12 @@ main(void) {
     }
     verify_int_heap(m);
     int a;
-    assert(mm_peekmin(m, int, a));
+    assert(mm_peekmin(m, int, &a));
     assert(a == -999);
-    assert(mm_peekmax(m, int, a));
+    assert(mm_peekmax(m, int, &a));
     assert(a == 999);
     int b = INT_MIN;
-    while (mm_pollmin(m, int, a)) {
+    while (mm_pollmin(m, int, &a)) {
         verify_int_heap(m);
         assert(a >= b);
         b = a;
@@ -66,21 +66,21 @@ main(void) {
     }
     verify_int_heap(m);
     b = INT_MAX;
-    while (mm_pollmax(m, int, a)) {
+    while (mm_pollmax(m, int, &a)) {
         assert(a <= b);
         b = a;
     }
     m = mm_drop(m);
 
     int *ia = malloc(100000 * sizeof(int));
-    for (int i = 0; i < 100000; i++) {
+    for (size_t i = 0; i < 100000; i++) {
         ia[i] = rand();
     }
     minmax *m1 = mm_fromarr(int, 100000, 100000, cmp_int, ia);
     verify_int_heap(m1);
     b = INT_MAX;
     for (int i = 0; i < 50000; i++) {
-        assert(mm_pollmax(m1, int, a));
+        assert(mm_pollmax(m1, int, &a));
         assert(a <= b);
         b = a;
     }
@@ -89,7 +89,7 @@ main(void) {
         mm_insert(m1, int, rand());
     }
     b = INT_MIN;
-    while (mm_pollmin(m1, int, a)) {
+    while (mm_pollmin(m1, int, &a)) {
         assert(a >= b);
         b = a;
     }

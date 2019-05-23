@@ -33,24 +33,21 @@ typedef int (*minmax_cmpfn)(void *restrict, void *restrict);
  * enough except when nesting similar macros in one another. */
 #define mm_insert(m, T, elt) mm_insert_(m, T, elt, __LINE__)
 
-/* TODO Is there a way to do this "type check" at compile-time? `static_assert`
- * is a statement, not an expression, so it can't be used with the comma
- * operator. Is this weak of a "type check" even worth doing? */
 #define mm_peekmin(m, T, elt) ( \
-    mm_assert_(sizeof(T) == sizeof(elt)), \
-    minmax_peekmin(m, sizeof(T), &(elt), false) \
+    mm_assert_(sizeof(T) == sizeof(*elt)), \
+    minmax_peekmin(m, sizeof(T), elt, false) \
 )
 #define mm_pollmin(m, T, elt) ( \
-    mm_assert_(sizeof(T) == sizeof(elt)), \
-    minmax_peekmin(m, sizeof(T), &(elt), true) \
+    mm_assert_(sizeof(T) == sizeof(*elt)), \
+    minmax_peekmin(m, sizeof(T), elt, true) \
 )
 #define mm_peekmax(m, T, elt) ( \
-    mm_assert_(sizeof(T) == sizeof(elt)), \
-    minmax_peekmax(m, sizeof(T), &(elt), false) \
+    mm_assert_(sizeof(T) == sizeof(*elt)), \
+    minmax_peekmax(m, sizeof(T), elt, false) \
 )
 #define mm_pollmax(m, T, elt) ( \
-    mm_assert_(sizeof(T) == sizeof(elt)), \
-    minmax_peekmax(m, sizeof(T), &(elt), true) \
+    mm_assert_(sizeof(T) == sizeof(*elt)), \
+    minmax_peekmax(m, sizeof(T), elt, true) \
 )
 
 /* These declarations must be present in exactly one compilation unit. */
@@ -248,7 +245,7 @@ minmax_trickle_down_min_(minmax *m, size_t index, size_t eltsize) {
                 cindex++;
             }
             if (gindex < m->len) {
-                for (unsigned i = 0; gindex + i < m->len && i < 4; i++) {
+                for (size_t i = 0; gindex + i < m->len && i < 4; i++) {
                     if (m->cmpfn(mm_elt_(cindex), mm_elt_((gindex + i))) > 0) {
                         cindex = gindex + i;
                     }
@@ -290,7 +287,7 @@ minmax_trickle_down_max_(minmax *m, size_t index, size_t eltsize) {
                 cindex++;
             }
             if (gindex < m->len) {
-                for (unsigned i = 0; gindex + i < m->len && i < 4; i++) {
+                for (size_t i = 0; gindex + i < m->len && i < 4; i++) {
                     if (m->cmpfn(mm_elt_(cindex), mm_elt_((gindex + i))) < 0) {
                         cindex = gindex + i;
                     }

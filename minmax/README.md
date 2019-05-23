@@ -54,16 +54,16 @@ at full capacity.
 
 #### mm_peekmin / mm_peekmax
 ```
-bool mm_peekmin(minmax *m, type T, T elt)
-bool mm_peekmax(minmax *m, type T, T elt)
+bool mm_peekmin(minmax *m, type T, T *elt)
+bool mm_peekmax(minmax *m, type T, T *elt)
 ```
 Stores either the minimum or maximum element in the heap in `elt` or returns
 `false` of the heap is empty.
 
 #### mm_pollmin / mm_pollmax
 ```
-bool mm_pollmin(minmax *m, type T, T elt)
-bool mm_pollmax(minmax *m, type T, T elt)
+bool mm_pollmin(minmax *m, type T, T *elt)
+bool mm_pollmax(minmax *m, type T, T *elt)
 ```
 Removes either the minimum or maximum element from the heap and stores it in
 `elt` or returns `false` of the heap is empty.

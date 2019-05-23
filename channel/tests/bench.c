@@ -8,24 +8,23 @@
 
 CHANNEL_EXTERN_DECL;
 
-CHANNEL_DEF(int);
-
 void *
 sender(void *arg) {
-    channel(int) *chan = (channel(int) *)arg;
+    channel *chan = (channel *)arg;
     for (int i = 1; i <= LIM; i++) {
-        ch_send(chan, i);
+        ch_send(chan, &i);
     }
-    ch_drop(ch_close(chan));
+    ch_close(chan);
+    ch_drop(chan);
     return NULL;
 }
 
 void *
 receiver(void *arg) {
-    channel(int) *chan = (channel(int) *)arg;
+    channel *chan = (channel *)arg;
     int i;
     long long sum = 0;
-    while (ch_recv(chan, i) != CH_CLOSED) {
+    while (ch_recv(chan, &i) != CH_CLOSED) {
         sum += i;
     }
     ch_drop(chan);
@@ -35,7 +34,7 @@ receiver(void *arg) {
 
 int
 main(void) {
-    channel(int) *chan = ch_make(int, 8);
+    channel *chan = ch_make(int, 8);
     pthread_t senders[THREADC];
     pthread_t recvers[THREADC];
     for (int i = 0; i < THREADC; i++) {
@@ -45,13 +44,14 @@ main(void) {
     for (int i = 0; i < THREADC; i++) {
         assert(pthread_create(recvers + i, NULL, receiver, ch_dup(chan)) == 0);
     }
-    chan = ch_drop(ch_close(chan));
+    ch_close(chan);
+    chan = ch_drop(chan);
 
-    for (int i = 0; i < THREADC; i++) {
+    for (size_t i = 0; i < THREADC; i++) {
         assert(pthread_join(senders[i], NULL) == 0);
     }
     long long sum = 0, t = 0;
-    for (int i = 0; i < THREADC; i++) {
+    for (size_t i = 0; i < THREADC; i++) {
         assert(pthread_join(recvers[i], (void **)&t) == 0);
         sum += t;
     }

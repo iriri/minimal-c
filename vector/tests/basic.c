@@ -12,9 +12,9 @@ verify(vector *v, int *ia, size_t len) {
         printf("len mismatch: %lu, %lu\n", vec_len(v), len);
         assert(0);
     }
-    for (unsigned i = 0; i < vec_len(v); i++) {
+    for (size_t i = 0; i < vec_len(v); i++) {
         if (vec_arr(v, int)[i] != ia[i]) {
-            printf("%u, %d, %d\n", i, vec_arr(v, int)[i], ia[i]);
+            printf("%zu, %d, %d\n", i, vec_arr(v, int)[i], ia[i]);
             assert(0);
         }
     }
@@ -32,7 +32,7 @@ main(void) {
     int a = 1;
     vec_push(v, int, a);
     vec_push(v, int, 2);
-    assert(vec_pop(v, int, a) && a == 2);
+    assert(vec_pop(v, int, &a) && a == 2);
     vec_push(v, int, 2);
     vec_push(v, int, 3);
     assert(v->cap == 4);
@@ -41,7 +41,7 @@ main(void) {
     assert(v->cap == 8);
     int via[] = {1, 2, 3, 4, 5};
     verify(v, via, 5);
-    assert(vec_peek(v, int, a));
+    assert(vec_peek(v, int, &a));
     assert(a == 5);
 
     vec_remove(v, 4);
@@ -51,7 +51,7 @@ main(void) {
     int via2[] = {1, 2, 4};
     verify(v, via2, 3);
     a = 1;
-    vec_remove(v, vec_find(v, a));
+    vec_remove(v, vec_find(v, &a));
     vec_shrink(v);
     assert(v->cap == 4);
     vec_trim(v);
@@ -63,8 +63,8 @@ main(void) {
     assert(a == 1);
 
     vector *v1 = vec_make(int, 5, 6);
-    for (unsigned i = 0; i < vec_len(v1); i++) {
-        vec_arr(v1, int)[i] = i + 1;
+    for (size_t i = 0; i < vec_len(v1); i++) {
+        vec_arr(v1, int)[i] = ((int)i) + 1;
     }
     verify(v1, via, 5);
     vec_concat(v, v1);
@@ -76,7 +76,7 @@ main(void) {
     vector *v2 = vec_make(fn, 0, 2);
     vec_push(v2, fn, &foo);
     vec_push(v2, fn, &foo);
-    for (unsigned i = 0; i < vec_len(v2); i++) {
+    for (size_t i = 0; i < vec_len(v2); i++) {
         vec_arr(v2, fn)[i]();
     }
     vec_drop(v2);

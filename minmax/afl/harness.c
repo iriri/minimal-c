@@ -18,9 +18,9 @@ verify_long_heap(minmax *m) {
         return;
     }
     long min = LONG_MIN, max = LONG_MAX;
-    mm_peekmin(m, long, min);
-    mm_peekmax(m, long, max);
-    for (unsigned i = 0; i < mm_len(m); i++) {
+    mm_peekmin(m, long, &min);
+    mm_peekmax(m, long, &max);
+    for (size_t i = 0; i < mm_len(m); i++) {
         if (minmax_parent_(i) == SIZE_MAX) {
             continue;
         }
@@ -47,9 +47,9 @@ main(void) {
         }
         long l = strtol(buf, NULL, 0);
         if (l == -1) {
-            mm_pollmin(m, long, l);
+            mm_pollmin(m, long, &l);
         } else if (l == 1) {
-            mm_pollmax(m, long, l);
+            mm_pollmax(m, long, &l);
         } else {
             mm_insert(m, long, l);
         }
@@ -58,5 +58,6 @@ main(void) {
     free(buf);
     buf = NULL;
     bufcap = 0;
+    mm_drop(m);
     return 0;
 }
