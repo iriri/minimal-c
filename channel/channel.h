@@ -62,6 +62,7 @@ typedef enum channel_op {
 #define ch_make(T, cap) channel_make(sizeof(T), cap)
 #define ch_dup(c) channel_dup(c)
 #define ch_drop(c) channel_drop(c)
+#define ch_fndrop(c, fn) channel_fndrop(c, fn)
 #define ch_open(c) channel_open(c)
 #define ch_close(c) channel_close(c)
 
@@ -88,6 +89,7 @@ typedef enum channel_op {
     extern inline channel *channel_make(size_t, size_t); \
     extern inline channel *channel_dup(channel *); \
     extern inline channel *channel_drop(channel *); \
+    extern inline channel *channel_fndrop(channel *, void (*)(void *)); \
     extern inline void channel_waitq_push_( \
         channel_waiter_root_ *, channel_waiter_ *waiter); \
     extern inline channel_waiter_ *channel_waitq_shift_( \
@@ -101,10 +103,6 @@ typedef enum channel_op {
     extern inline channel_rc channel_buf_tryrecv_(channel_buf_ *, void *); \
     extern inline channel_rc channel_unbuf_try_( \
         channel_unbuf_ *, void *, channel_waiter_root_ *); \
-    extern inline channel_rc channel_buf_send_or_wait_( \
-        channel_buf_ *, void *, channel_waiter_buf_ *); \
-    extern inline channel_rc channel_buf_recv_or_wait_( \
-        channel_buf_ *, void *, channel_waiter_buf_ *); \
     extern inline channel_rc channel_buf_send_( \
         channel_buf_ *, void *, ch_timespec_ *); \
     extern inline channel_rc channel_buf_recv_( \
@@ -369,6 +367,32 @@ channel_drop(channel *c) {
     }
 }
 
+inline channel *
+channel_fndrop(channel *c, void (*fn)(void *)) {
+    switch (ch_fas_acr_(&c->hdr.refc, 1)) {
+    case 0: ch_assert_(false);
+    case 1:
+        if (c->hdr.cap > 0) {
+            channel_un64_ read = {ch_load_rlx_(&c->buf.read.u64)};
+            for ( ; ; ) {
+                char *cell =
+                    c->buf.buf + (read.idx * ch_cellsize_(c->buf.msgsize));
+                if (read.lap != ch_load_rlx_(ch_cell_lap_(cell))) {
+                    break;
+                }
+                fn(ch_cell_msg_(cell));
+                read.u64 = read.idx + 1 < c->buf.cap ?
+                    read.u64 + 1 : (uint64_t)(read.lap + 2) << 32;
+            }
+        }
+        ch_mutex_lock_(&c->hdr.lock);
+        ch_mutex_unlock_(&c->hdr.lock);
+        ch_assert_(ch_mutex_destroy_(&c->hdr.lock) == 0);
+        free(c); // fallthrough
+    default: return NULL;
+    }
+}
+
 inline void
 channel_waitq_push_(channel_waiter_root_ *waitq, channel_waiter_ *w) {
     w->hdr.next = (channel_waiter_ *)waitq;
@@ -462,34 +486,37 @@ channel_buf_waitq_shift_(channel_waiter_root_ *waitq, ch_mutex_ *lock) {
 
 inline channel_rc
 channel_buf_trysend_(channel_buf_ *c, void *msg) {
-    if (ch_load_acq_(&c->openc) > 0) {
-        int i = 0;
-        channel_un64_ write = {ch_load_acq_(&c->write.u64)};
-        do {
-            char *cell = c->buf + (write.idx * ch_cellsize_(c->msgsize));
-            uint32_t lap = ch_load_acq_(ch_cell_lap_(cell));
-            if (write.lap == lap) {
-                uint64_t write1 = write.idx + 1 < c->cap ?
-                    write.u64 + 1 : (uint64_t)(write.lap + 2) << 32;
-                if (!ch_cas_w_seq_acq_(&c->write.u64, &write.u64, write1)) {
-                    continue;
-                }
-                memcpy(ch_cell_msg_(cell), msg, c->msgsize);
-                ch_store_rel_(ch_cell_lap_(cell), lap + 1);
-                channel_buf_waitq_shift_(&c->recvq, &c->lock);
-                return CH_OK;
-            }
-
-            if (write.lap > lap) {
-                if (++i > 4) {
-                    return CH_WBLOCK;
-                }
-                sched_yield();
-            }
-            write.u64 = ch_load_acq_(&c->write.u64);
-        } while (ch_load_acq_(&c->openc) > 0);
+    if (ch_load_acq_(&c->openc) == 0) {
+        return CH_CLOSED;
     }
-    return CH_CLOSED;
+
+    channel_un64_ write = {ch_load_acq_(&c->write.u64)};
+    for (int i = 0; ; ) {
+        char *cell = c->buf + (write.idx * ch_cellsize_(c->msgsize));
+        uint32_t lap = ch_load_acq_(ch_cell_lap_(cell));
+        if (write.lap == lap) {
+            uint64_t write1 = write.idx + 1 < c->cap ?
+                write.u64 + 1 : (uint64_t)(write.lap + 2) << 32;
+            if (!ch_cas_w_seq_acq_(&c->write.u64, &write.u64, write1)) {
+                continue;
+            }
+            memcpy(ch_cell_msg_(cell), msg, c->msgsize);
+            ch_store_rel_(ch_cell_lap_(cell), lap + 1);
+            channel_buf_waitq_shift_(&c->recvq, &c->lock);
+            return CH_OK;
+        }
+
+        if (write.lap > lap) {
+            if (++i > 4) {
+                return CH_WBLOCK;
+            }
+            sched_yield();
+        }
+        if (ch_load_acq_(&c->openc) == 0) {
+            return CH_CLOSED;
+        }
+        write.u64 = ch_load_acq_(&c->write.u64);
+    }
 }
 
 inline channel_rc
@@ -559,7 +586,11 @@ channel_unbuf_try_(channel_unbuf_ *c, void *msg, channel_waiter_root_ *waitq) {
 }
 
 inline channel_rc
-channel_buf_send_or_wait_(channel_buf_ *c, void *msg, channel_waiter_buf_ *w) {
+channel_buf_send_(channel_buf_ *c, void *msg, ch_timespec_ *timeout) {
+    ch_sem_ sem;
+    ch_sem_init_(&sem, 0, 0);
+    channel_waiter_buf_ w = {.sem = &sem, .alt_id = CH_ALT_NIL_};
+
     for ( ; ; ) {
         channel_rc rc = channel_buf_trysend_(c, msg);
         if (rc != CH_WBLOCK) {
@@ -572,58 +603,15 @@ channel_buf_send_or_wait_(channel_buf_ *c, void *msg, channel_waiter_buf_ *w) {
             return CH_CLOSED;
         }
         /* TODO: Casts are evil. Figure out how to get rid of these. */
-        channel_waitq_push_(&c->sendq, (channel_waiter_ *)w);
+        channel_waitq_push_(&c->sendq, (channel_waiter_ *)&w);
         channel_un64_ write = {ch_load_acq_(&c->write.u64)};
         char *cell = c->buf + (write.idx * ch_cellsize_(c->msgsize));
         if (write.lap == ch_load_acq_(ch_cell_lap_(cell))) {
-            channel_waitq_remove_((channel_waiter_ *)w);
+            channel_waitq_remove_((channel_waiter_ *)&w);
             ch_mutex_unlock_(&c->lock);
             continue;
         }
         ch_mutex_unlock_(&c->lock);
-        return CH_WBLOCK;
-    }
-}
-
-inline channel_rc
-channel_buf_recv_or_wait_(channel_buf_ *c, void *msg, channel_waiter_buf_ *w) {
-    for ( ; ; ) {
-        channel_rc rc = channel_buf_tryrecv_(c, msg);
-        if (rc != CH_WBLOCK) {
-            return rc;
-        }
-
-        ch_mutex_lock_(&c->lock);
-        channel_waitq_push_(&c->recvq, (channel_waiter_ *)w);
-        channel_un64_ read = {ch_load_acq_(&c->read.u64)};
-        char *cell = c->buf + (read.idx * ch_cellsize_(c->msgsize));
-        if (read.lap == ch_load_acq_(ch_cell_lap_(cell))) {
-            channel_waitq_remove_((channel_waiter_ *)w);
-            ch_mutex_unlock_(&c->lock);
-            continue;
-        }
-        if (ch_load_acq_(&c->openc) == 0) {
-            channel_waitq_remove_((channel_waiter_ *)w);
-            ch_mutex_unlock_(&c->lock);
-            return CH_CLOSED;
-        }
-        ch_mutex_unlock_(&c->lock);
-        return CH_WBLOCK;
-    }
-}
-
-inline channel_rc
-channel_buf_send_(channel_buf_ *c, void *msg, ch_timespec_ *timeout) {
-    ch_sem_ sem;
-    ch_sem_init_(&sem, 0, 0);
-    channel_waiter_buf_ w = {.sem = &sem, .alt_id = CH_ALT_NIL_};
-
-    for ( ; ; ) {
-        channel_rc rc = channel_buf_send_or_wait_(c, msg, &w);
-        if (rc != CH_WBLOCK) {
-            ch_sem_destroy_(&sem);
-            return rc;
-        }
 
         if (timeout == NULL) {
             ch_sem_wait_(&sem);
@@ -653,11 +641,26 @@ channel_buf_recv_(channel_buf_ *c, void *msg, ch_timespec_ *timeout) {
     channel_waiter_buf_ w = {.sem = &sem, .alt_id = CH_ALT_NIL_};
 
     for ( ; ; ) {
-        channel_rc rc = channel_buf_recv_or_wait_(c, msg, &w);
+        channel_rc rc = channel_buf_tryrecv_(c, msg);
         if (rc != CH_WBLOCK) {
-            ch_sem_destroy_(&sem);
             return rc;
         }
+
+        ch_mutex_lock_(&c->lock);
+        channel_waitq_push_(&c->recvq, (channel_waiter_ *)&w);
+        channel_un64_ read = {ch_load_acq_(&c->read.u64)};
+        char *cell = c->buf + (read.idx * ch_cellsize_(c->msgsize));
+        if (read.lap == ch_load_acq_(ch_cell_lap_(cell))) {
+            channel_waitq_remove_((channel_waiter_ *)&w);
+            ch_mutex_unlock_(&c->lock);
+            continue;
+        }
+        if (ch_load_acq_(&c->openc) == 0) {
+            channel_waitq_remove_((channel_waiter_ *)&w);
+            ch_mutex_unlock_(&c->lock);
+            return CH_CLOSED;
+        }
+        ch_mutex_unlock_(&c->lock);
 
         if (timeout == NULL) {
             ch_sem_wait_(&sem);
